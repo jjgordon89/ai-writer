@@ -84,8 +84,9 @@ export class LanceDBService {
     const vector = embeddings[0];
 
     if (vector.length !== this.embeddingDimension) {
-      console.warn(`Generated embedding dimension (${vector.length}) does not match expected dimension (${this.embeddingDimension}). Ensure AI Service is configured with the correct model.`);
-      // Potentially throw an error or try to handle, for now, we'll proceed but this is a critical check.
+      const message = `Generated embedding dimension (${vector.length}) does not match expected dimension (${this.embeddingDimension}). Ensure AI Service is configured with the correct model.`;
+      console.warn(message);
+      throw new Error(`Embedding dimension mismatch. Expected ${this.embeddingDimension}, got ${vector.length}`);
     }
 
     const chunk: TextChunk = {
@@ -121,8 +122,9 @@ export class LanceDBService {
     const queryVector = embeddings[0];
 
     if (queryVector.length !== this.embeddingDimension) {
-      console.warn(`Generated query embedding dimension (${queryVector.length}) does not match expected dimension (${this.embeddingDimension}). Ensure AI Service is configured with the correct model.`);
-      // Potentially throw an error.
+      const message = `Generated query embedding dimension (${queryVector.length}) does not match expected dimension (${this.embeddingDimension}). Ensure AI Service is configured with the correct model.`;
+      console.warn(message);
+      throw new Error(`Query embedding dimension mismatch. Expected ${this.embeddingDimension}, got ${queryVector.length}`);
     }
 
     try {

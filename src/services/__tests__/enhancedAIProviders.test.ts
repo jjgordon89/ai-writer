@@ -1,4 +1,15 @@
-import { EnhancedSecureAIService, createDefaultSecureAISettings, AI_PROVIDERS, PlotGenerationRequest, PlotGenerationResponse, SecureAISettings } from '../enhancedAIProviders';
+import {
+  EnhancedSecureAIService,
+  createDefaultSecureAISettings,
+  AI_PROVIDERS,
+  PlotGenerationRequest,
+  PlotGenerationResponse,
+  SecureAISettings,
+  CharacterArcRequest, // Added
+  CharacterArcResponse, // Added
+  StyleToneAnalysisRequest, // Added
+  StyleToneAnalysisResponse // Added
+} from '../enhancedAIProviders';
 import { enhancedSecureStorage } from '../enhancedSecureStorage';
 
 // Mock enhancedSecureStorage
@@ -119,6 +130,83 @@ describe('EnhancedSecureAIService', () => {
       // And the PlotGenerationResponse interface's `content` field would be `object` or a specific type.
       // For now, `AIResponse.content` is `string`.
     });
+
+    it('should throw an error if API key is missing for OpenAI plot generation', async () => {
+      (enhancedSecureStorage.getSecure as jest.Mock).mockResolvedValue(null); // No API key
+
+      settings.defaultProvider = 'openai';
+      settings.providers.openai = { ...settings.providers.openai, isEnabled: true };
+      service = new EnhancedSecureAIService(settings);
+
+      const mockPlotRequest: PlotGenerationRequest = { prompt: 'A story about a dragon.', type: 'plot-generation' };
+      // Expecting the specific error message from EnhancedSecureAIService when API key is missing
+      // The service's generateContent method, called by generatePlot, checks for API key.
+      await expect(service.generatePlot(mockPlotRequest))
+        .rejects.toThrow('API key required for OpenAI. Please configure it in settings.');
+    });
+
+    it('should handle fetch network errors during plot generation', async () => {
+      (enhancedSecureStorage.getSecure as jest.Mock).mockResolvedValue('sk-testapikey');
+      mockFetch.mockRejectedValueOnce(new TypeError('Network request failed'));
+
+      settings.defaultProvider = 'openai';
+      settings.providers.openai = { ...settings.providers.openai, isEnabled: true };
+      service = new EnhancedSecureAIService(settings);
+
+      const mockPlotRequest: PlotGenerationRequest = { prompt: 'A story.', type: 'plot-generation' };
+      // ErrorSanitizer might modify this message. The service itself re-throws the error.
+      // The actual error message would be caught by the generic try-catch in generateContent, then sanitized.
+      // For a TypeError 'Network request failed', ErrorSanitizer.sanitizeForUser would return a generic message or the original.
+      // Let's assume it returns the original message or a wrapper around it for now.
+      await expect(service.generatePlot(mockPlotRequest))
+        .rejects.toThrow(expect.stringContaining('Network request failed'));
+    });
+
+    it('should handle API errors (e.g., 401 Unauthorized) during plot generation', async () => {
+      (enhancedSecureStorage.getSecure as jest.Mock).mockResolvedValue('sk-testapikey');
+      const apiErrorResponse = {
+        error: { message: 'Invalid API key', type: 'auth_error', code: 'invalid_api_key' },
+      };
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        statusText: 'Unauthorized',
+        json: async () => apiErrorResponse,
+        text: async () => JSON.stringify(apiErrorResponse),
+      });
+
+      settings.defaultProvider = 'openai';
+      settings.providers.openai = { ...settings.providers.openai, isEnabled: true };
+      service = new EnhancedSecureAIService(settings);
+
+      const mockPlotRequest: PlotGenerationRequest = { prompt: 'A story.', type: 'plot-generation' };
+      // The callOpenAICompatible method throws `errorData.error?.message` or the HTTP status.
+      await expect(service.generatePlot(mockPlotRequest))
+        .rejects.toThrow(expect.stringContaining('Invalid API key'));
+    });
+
+    it('should handle malformed successful API responses during plot generation', async () => {
+      (enhancedSecureStorage.getSecure as jest.Mock).mockResolvedValue('sk-testapikey');
+      const malformedApiResponse = {
+        id: 'cmpl-malformed123',
+        object: 'chat.completion',
+        created: Date.now(),
+        model: 'gpt-4o',
+        // choices: [], // Missing or malformed choices
+      };
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => malformedApiResponse,
+      });
+
+      settings.defaultProvider = 'openai';
+      settings.providers.openai = { ...settings.providers.openai, isEnabled: true };
+      service = new EnhancedSecureAIService(settings);
+
+      const mockPlotRequest: PlotGenerationRequest = { prompt: 'A story.', type: 'plot-generation' };
+      await expect(service.generatePlot(mockPlotRequest))
+        .rejects.toThrow('Invalid response format from API'); // From callOpenAICompatible
+    });
   });
 
   describe('getEmbeddings', () => {
@@ -174,14 +262,56 @@ describe('EnhancedSecureAIService', () => {
     it('should throw for non-OpenAI/OpenRouter providers if not implemented', async () => {
       settings.defaultProvider = 'anthropic';
       settings.providers.anthropic = { isEnabled: true, selectedModel: 'claude-3-haiku-20240307' };
-      // Ensure anthropic provider has no embeddingModels defined in AI_PROVIDERS for this test,
-      // or that selectedEmbeddingModel is also undefined for it.
       const anthropicProviderDef = AI_PROVIDERS.find(p => p.id === 'anthropic');
-      if (anthropicProviderDef) anthropicProviderDef.embeddingModels = undefined; // Temporarily ensure no defaults picked up
+      if (anthropicProviderDef) anthropicProviderDef.embeddingModels = undefined;
 
       service = new EnhancedSecureAIService(settings);
-      // The error message is "Embedding generation for anthropic is not yet implemented."
       await expect(service.getEmbeddings(['text'])).rejects.toThrow('Embedding generation for anthropic is not yet implemented.');
+    });
+
+    it('should handle fetch network errors during getEmbeddings', async () => {
+      (enhancedSecureStorage.getSecure as jest.Mock).mockResolvedValue('sk-testapikey');
+      mockFetch.mockRejectedValueOnce(new TypeError('Network request failed'));
+      settings.defaultProvider = 'openai';
+      settings.providers.openai = { ...settings.providers.openai, isEnabled: true, selectedEmbeddingModel: 'text-embedding-3-small' };
+      service = new EnhancedSecureAIService(settings);
+      await expect(service.getEmbeddings(['text'], 'text-embedding-3-small')).rejects.toThrow('Network request failed');
+    });
+
+    it('should handle API errors (e.g., 401 Unauthorized) during getEmbeddings', async () => {
+      (enhancedSecureStorage.getSecure as jest.Mock).mockResolvedValue('sk-testapikey');
+      const apiErrorResponse = { error: { message: 'Invalid API key for embeddings' } };
+      mockFetch.mockResolvedValueOnce({
+        ok: false, status: 401, json: async () => apiErrorResponse, text: async () => JSON.stringify(apiErrorResponse)
+      });
+      settings.defaultProvider = 'openai';
+      settings.providers.openai = { ...settings.providers.openai, isEnabled: true, selectedEmbeddingModel: 'text-embedding-3-small' };
+      service = new EnhancedSecureAIService(settings);
+      await expect(service.getEmbeddings(['text'], 'text-embedding-3-small')).rejects.toThrow('Invalid API key for embeddings');
+    });
+
+    it('should handle malformed successful API responses during getEmbeddings (missing data.data)', async () => {
+      (enhancedSecureStorage.getSecure as jest.Mock).mockResolvedValue('sk-testapikey');
+      const malformedApiResponse = { object: 'list', model: 'text-embedding-3-small' /* data field missing */ };
+      mockFetch.mockResolvedValueOnce({ ok: true, json: async () => malformedApiResponse });
+      settings.defaultProvider = 'openai';
+      settings.providers.openai = { ...settings.providers.openai, isEnabled: true, selectedEmbeddingModel: 'text-embedding-3-small' };
+      service = new EnhancedSecureAIService(settings);
+      await expect(service.getEmbeddings(['text'], 'text-embedding-3-small')).rejects.toThrow('Failed to parse embeddings from API response: data field is missing or not an array.');
+    });
+
+    it('should handle malformed successful API responses during getEmbeddings (missing item.embedding)', async () => {
+      (enhancedSecureStorage.getSecure as jest.Mock).mockResolvedValue('sk-testapikey');
+      const malformedApiResponse = {
+        object: 'list',
+        data: [{ object: 'embedding', index: 0 /* embedding field missing */ }],
+        model: 'text-embedding-3-small'
+      };
+      mockFetch.mockResolvedValueOnce({ ok: true, json: async () => malformedApiResponse });
+      settings.defaultProvider = 'openai';
+      settings.providers.openai = { ...settings.providers.openai, isEnabled: true, selectedEmbeddingModel: 'text-embedding-3-small' };
+      service = new EnhancedSecureAIService(settings);
+      await expect(service.getEmbeddings(['text'], 'text-embedding-3-small')).rejects.toThrow('Invalid embedding format in API response item.');
     });
   });
 
@@ -238,6 +368,202 @@ describe('EnhancedSecureAIService', () => {
         originalHFProvider.embeddingModels = oldEmbeddingModels;
       }
       consoleWarnSpy.mockRestore();
+    });
+  });
+
+  describe('developCharacterArc', () => {
+    it('should develop a character arc successfully with OpenAI', async () => {
+      const mockApiKey = 'sk-testapikey';
+      (enhancedSecureStorage.getSecure as jest.Mock).mockResolvedValue(mockApiKey);
+
+      const mockArcRequest: CharacterArcRequest = {
+        prompt: 'Develop an arc for a knight who learns humility.',
+        type: 'character-arc-development',
+        characterId: 'sir-gawain',
+        characterData: { id: 'sir-gawain', name: 'Sir Gawain', description: 'A proud knight' } as any,
+        desiredArcType: 'redemption',
+      };
+
+      const aiGeneratedArcContent = {
+        suggestedArc: {
+          arcSummary: 'The knight starts arrogant, faces trials, learns humility, and becomes a true hero.',
+          keyDevelopmentStages: ['Initial arrogance', 'Challenging quest', 'Moment of failure', 'Learning humility', 'Redemption'],
+          potentialConflicts: ['Conflict with a humble peasant', 'Internal struggle with pride'],
+          endingResolution: 'The knight sacrifices personal glory for the greater good.'
+        }
+      };
+      const mockApiResponse = {
+        id: 'cmpl-chararc123',
+        object: 'chat.completion',
+        created: Date.now(),
+        model: 'gpt-4o',
+        choices: [{ message: { content: JSON.stringify(aiGeneratedArcContent) } }],
+        usage: { prompt_tokens: 15, completion_tokens: 150, total_tokens: 165 },
+      };
+      mockFetch.mockResolvedValueOnce({ ok: true, json: async () => mockApiResponse });
+
+      settings.defaultProvider = 'openai';
+      settings.providers.openai = { ...settings.providers.openai, isEnabled: true, selectedModel: 'gpt-4o' };
+      service = new EnhancedSecureAIService(settings);
+
+      const result = await service.developCharacterArc(mockArcRequest);
+
+      expect(enhancedSecureStorage.getSecure).toHaveBeenCalledWith('apikey-openai');
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      const fetchCall = mockFetch.mock.calls[0];
+      const requestBody = JSON.parse(fetchCall[1].body as string);
+
+      // Check how EnhancedSecureAIService.developCharacterArc constructs the prompt
+      // Based on current placeholder: request.prompt || `Develop character arc for ${request.characterId || 'a character'} with details: ${JSON.stringify(request.characterData) || ''}`
+      const expectedPrompt = mockArcRequest.prompt || `Develop character arc for ${mockArcRequest.characterId || 'a character'} with details: ${JSON.stringify(mockArcRequest.characterData) || ''}`;
+      expect(requestBody.messages[1].content).toBe(expectedPrompt);
+
+      expect(result.provider).toBe('OpenAI');
+      expect(result.content).toBe(JSON.stringify(aiGeneratedArcContent));
+    });
+
+    it('should throw an error if API key is missing for OpenAI character arc development', async () => {
+      (enhancedSecureStorage.getSecure as jest.Mock).mockResolvedValue(null);
+      settings.defaultProvider = 'openai';
+      settings.providers.openai = { ...settings.providers.openai, isEnabled: true };
+      service = new EnhancedSecureAIService(settings);
+      const mockRequest: CharacterArcRequest = { prompt: 'Arc for a hero.', type: 'character-arc-development' };
+      await expect(service.developCharacterArc(mockRequest))
+        .rejects.toThrow('API key required for OpenAI. Please configure it in settings.');
+    });
+
+    it('should handle fetch network errors during character arc development', async () => {
+      (enhancedSecureStorage.getSecure as jest.Mock).mockResolvedValue('sk-testapikey');
+      mockFetch.mockRejectedValueOnce(new TypeError('Network request failed'));
+      settings.defaultProvider = 'openai';
+      settings.providers.openai = { ...settings.providers.openai, isEnabled: true };
+      service = new EnhancedSecureAIService(settings);
+      const mockRequest: CharacterArcRequest = { prompt: 'Arc for a hero.', type: 'character-arc-development' };
+      await expect(service.developCharacterArc(mockRequest))
+        .rejects.toThrow(expect.stringContaining('Network request failed'));
+    });
+
+    it('should handle API errors (e.g., 401 Unauthorized) during character arc development', async () => {
+      (enhancedSecureStorage.getSecure as jest.Mock).mockResolvedValue('sk-testapikey');
+      const apiErrorResponse = { error: { message: 'Invalid API key' } };
+      mockFetch.mockResolvedValueOnce({
+        ok: false, status: 401, json: async () => apiErrorResponse, text: async () => JSON.stringify(apiErrorResponse)
+      });
+      settings.defaultProvider = 'openai';
+      settings.providers.openai = { ...settings.providers.openai, isEnabled: true };
+      service = new EnhancedSecureAIService(settings);
+      const mockRequest: CharacterArcRequest = { prompt: 'Arc for a hero.', type: 'character-arc-development' };
+      await expect(service.developCharacterArc(mockRequest))
+        .rejects.toThrow(expect.stringContaining('Invalid API key'));
+    });
+
+    it('should handle malformed successful API responses during character arc development', async () => {
+      (enhancedSecureStorage.getSecure as jest.Mock).mockResolvedValue('sk-testapikey');
+      const malformedApiResponse = { id: 'cmpl-malformed123' /* Missing choices */ };
+      mockFetch.mockResolvedValueOnce({ ok: true, json: async () => malformedApiResponse });
+      settings.defaultProvider = 'openai';
+      settings.providers.openai = { ...settings.providers.openai, isEnabled: true };
+      service = new EnhancedSecureAIService(settings);
+      const mockRequest: CharacterArcRequest = { prompt: 'Arc for a hero.', type: 'character-arc-development' };
+      await expect(service.developCharacterArc(mockRequest))
+        .rejects.toThrow('Invalid response format from API');
+    });
+  });
+
+  describe('analyzeStyleTone', () => {
+    it('should analyze style and tone successfully with OpenAI', async () => {
+      const mockApiKey = 'sk-testapikey';
+      (enhancedSecureStorage.getSecure as jest.Mock).mockResolvedValue(mockApiKey);
+
+      const mockStyleToneRequest: StyleToneAnalysisRequest = {
+        prompt: 'Analyze the style of this text: It was a dark and stormy night.',
+        type: 'style-tone-analysis',
+        textToAnalyze: 'It was a dark and stormy night. The wind howled like a banshee.',
+        referenceTexts: ['Call me Ishmael.'],
+        desiredStyle: 'gothic',
+        desiredTone: 'ominous',
+      };
+
+      const aiGeneratedStyleToneContent = {
+        consistencyScore: 0.85,
+        feedbackOnStyle: 'The style is appropriately dark and matches gothic literature.',
+        feedbackOnTone: 'The tone is ominous and suspenseful.',
+        suggestionsForImprovement: ['Consider adding more sensory details.']
+      };
+      const mockApiResponse = {
+        id: 'cmpl-styletone123',
+        object: 'chat.completion',
+        created: Date.now(),
+        model: 'gpt-4o',
+        choices: [{ message: { content: JSON.stringify(aiGeneratedStyleToneContent) } }],
+        usage: { prompt_tokens: 20, completion_tokens: 120, total_tokens: 140 },
+      };
+      mockFetch.mockResolvedValueOnce({ ok: true, json: async () => mockApiResponse });
+
+      settings.defaultProvider = 'openai';
+      settings.providers.openai = { ...settings.providers.openai, isEnabled: true, selectedModel: 'gpt-4o' };
+      service = new EnhancedSecureAIService(settings);
+
+      const result = await service.analyzeStyleTone(mockStyleToneRequest);
+
+      expect(enhancedSecureStorage.getSecure).toHaveBeenCalledWith('apikey-openai');
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      const fetchCall = mockFetch.mock.calls[0];
+      const requestBody = JSON.parse(fetchCall[1].body as string);
+
+      // Based on current placeholder: request.prompt || `Analyze style/tone for text: "${request.textToAnalyze.substring(0,100)}..."`
+      const expectedPrompt = mockStyleToneRequest.prompt || `Analyze style/tone for text: "${mockStyleToneRequest.textToAnalyze.substring(0,100)}..."`;
+      expect(requestBody.messages[1].content).toBe(expectedPrompt);
+
+      expect(result.provider).toBe('OpenAI');
+      expect(result.content).toBe(JSON.stringify(aiGeneratedStyleToneContent));
+    });
+
+    it('should throw an error if API key is missing for OpenAI style/tone analysis', async () => {
+      (enhancedSecureStorage.getSecure as jest.Mock).mockResolvedValue(null);
+      settings.defaultProvider = 'openai';
+      settings.providers.openai = { ...settings.providers.openai, isEnabled: true };
+      service = new EnhancedSecureAIService(settings);
+      const mockRequest: StyleToneAnalysisRequest = { textToAnalyze: 'Some text.', type: 'style-tone-analysis' };
+      await expect(service.analyzeStyleTone(mockRequest))
+        .rejects.toThrow('API key required for OpenAI. Please configure it in settings.');
+    });
+
+    it('should handle fetch network errors during style/tone analysis', async () => {
+      (enhancedSecureStorage.getSecure as jest.Mock).mockResolvedValue('sk-testapikey');
+      mockFetch.mockRejectedValueOnce(new TypeError('Network request failed'));
+      settings.defaultProvider = 'openai';
+      settings.providers.openai = { ...settings.providers.openai, isEnabled: true };
+      service = new EnhancedSecureAIService(settings);
+      const mockRequest: StyleToneAnalysisRequest = { textToAnalyze: 'Some text.', type: 'style-tone-analysis' };
+      await expect(service.analyzeStyleTone(mockRequest))
+        .rejects.toThrow(expect.stringContaining('Network request failed'));
+    });
+
+    it('should handle API errors (e.g., 401 Unauthorized) during style/tone analysis', async () => {
+      (enhancedSecureStorage.getSecure as jest.Mock).mockResolvedValue('sk-testapikey');
+      const apiErrorResponse = { error: { message: 'Invalid API key' } };
+      mockFetch.mockResolvedValueOnce({
+        ok: false, status: 401, json: async () => apiErrorResponse, text: async () => JSON.stringify(apiErrorResponse)
+      });
+      settings.defaultProvider = 'openai';
+      settings.providers.openai = { ...settings.providers.openai, isEnabled: true };
+      service = new EnhancedSecureAIService(settings);
+      const mockRequest: StyleToneAnalysisRequest = { textToAnalyze: 'Some text.', type: 'style-tone-analysis' };
+      await expect(service.analyzeStyleTone(mockRequest))
+        .rejects.toThrow(expect.stringContaining('Invalid API key'));
+    });
+
+    it('should handle malformed successful API responses during style/tone analysis', async () => {
+      (enhancedSecureStorage.getSecure as jest.Mock).mockResolvedValue('sk-testapikey');
+      const malformedApiResponse = { id: 'cmpl-malformed123' /* Missing choices */ };
+      mockFetch.mockResolvedValueOnce({ ok: true, json: async () => malformedApiResponse });
+      settings.defaultProvider = 'openai';
+      settings.providers.openai = { ...settings.providers.openai, isEnabled: true };
+      service = new EnhancedSecureAIService(settings);
+      const mockRequest: StyleToneAnalysisRequest = { textToAnalyze: 'Some text.', type: 'style-tone-analysis' };
+      await expect(service.analyzeStyleTone(mockRequest))
+        .rejects.toThrow('Invalid response format from API');
     });
   });
 });
