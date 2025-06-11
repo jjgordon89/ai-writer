@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useReducer, useCallback, useEffect } from 'react';
-import { useEnhancedSecureAIService } from '../hooks/useEnhancedSecureAIService';
-import { SecureAISettings } from '../services/enhancedAIProviders';
+import { useAIService } from '../hooks/useAIService'; // Renamed from useEnhancedSecureAIService
+import type { AISettings, AIRequest, AIResponse } from '../types/ai'; // Updated imports
 import { useAsyncErrorHandler } from '../hooks/useAsyncErrorHandler';
 
 interface GenerationHistory {
@@ -23,7 +23,7 @@ interface AIState {
   isGenerating: boolean;
   currentGeneration: string;
   generationHistory: GenerationHistory[];
-  settings: SecureAISettings;
+  settings: AISettings; // Updated to AISettings
   serviceMetrics: {
     requestCount: number;
     lastRequestTime: number;
@@ -39,17 +39,17 @@ type AIAction =
   | { type: 'SET_CURRENT_GENERATION'; payload: string }
   | { type: 'ADD_TO_HISTORY'; payload: GenerationHistory }
   | { type: 'CLEAR_HISTORY' }
-  | { type: 'UPDATE_SETTINGS'; payload: SecureAISettings }
+  | { type: 'UPDATE_SETTINGS'; payload: AISettings } // Updated to AISettings
   | { type: 'UPDATE_METRICS'; payload: AIState['serviceMetrics'] };
 
 interface AIContextValue {
   state: AIState;
   actions: {
-    generateContent: (request: import('../services/enhancedAIProviders').AIRequest) => Promise<{ success: boolean; data?: import('../services/enhancedAIProviders').AIResponse; error?: string }>;
+    generateContent: (request: AIRequest) => Promise<{ success: boolean; data?: AIResponse; error?: string }>; // Updated to AIRequest, AIResponse
     setApiKey: (providerId: string, apiKey: string) => Promise<{ success: boolean; error?: string }>;
     getApiKey: (providerId: string) => Promise<string | null>;
     removeApiKey: (providerId: string) => Promise<{ success: boolean; error?: string }>;
-    updateSettings: (settings: SecureAISettings) => void;
+    updateSettings: (settings: AISettings) => void; // Updated to AISettings
     clearHistory: () => void;
     refreshMetrics: () => void;
   };
@@ -91,7 +91,7 @@ function aiReducer(state: AIState, action: AIAction): AIState {
 }
 
 export function AIProvider({ children }: { children: React.ReactNode }) {
-  const aiService = useEnhancedSecureAIService();
+  const aiServiceHook = useAIService(); // Renamed variable for clarity from aiService to aiServiceHook
   const { reportError, wrapAsync } = useAsyncErrorHandler({ component: 'AIProvider' });
 
   const [state, dispatch] = useReducer(aiReducer, {
@@ -100,7 +100,7 @@ export function AIProvider({ children }: { children: React.ReactNode }) {
     isGenerating: false,
     currentGeneration: '',
     generationHistory: [],
-    settings: aiService.settings,
+    settings: aiServiceHook.settings, // Use aiServiceHook
     serviceMetrics: {
       requestCount: 0,
       lastRequestTime: 0,
@@ -111,16 +111,16 @@ export function AIProvider({ children }: { children: React.ReactNode }) {
 
   // Sync with AI service state
   useEffect(() => {
-    dispatch({ type: 'SET_INITIALIZED', payload: aiService.isInitialized });
-    dispatch({ type: 'SET_INITIALIZATION_ERROR', payload: aiService.initializationError });
-    dispatch({ type: 'UPDATE_SETTINGS', payload: aiService.settings });
-  }, [aiService.isInitialized, aiService.initializationError, aiService.settings]);
+    dispatch({ type: 'SET_INITIALIZED', payload: aiServiceHook.isInitialized });
+    dispatch({ type: 'SET_INITIALIZATION_ERROR', payload: aiServiceHook.initializationError });
+    dispatch({ type: 'UPDATE_SETTINGS', payload: aiServiceHook.settings });
+  }, [aiServiceHook.isInitialized, aiServiceHook.initializationError, aiServiceHook.settings]);
 
   // Update metrics periodically
   useEffect(() => {
     const updateMetrics = () => {
       try {
-        const metrics = aiService.getServiceMetrics();
+        const metrics = aiServiceHook.getServiceMetrics(); // Use aiServiceHook
         dispatch({ type: 'UPDATE_METRICS', payload: metrics });
       } catch (error) {
         reportError(error, { action: 'update-metrics' });
@@ -131,15 +131,15 @@ export function AIProvider({ children }: { children: React.ReactNode }) {
     updateMetrics(); // Initial update
 
     return () => clearInterval(interval);
-  }, [aiService, reportError]);
+  }, [aiServiceHook, reportError]); // Use aiServiceHook
 
   const actions = {
-    generateContent: useCallback(async (request: import('../services/enhancedAIProviders').AIRequest) => {
+    generateContent: useCallback(async (request: AIRequest) => { // Updated to AIRequest
       return await wrapAsync(async () => {
         dispatch({ type: 'SET_GENERATING', payload: true });
         dispatch({ type: 'SET_CURRENT_GENERATION', payload: '' });
 
-        const result = await aiService.generateContent(request);
+        const result = await aiServiceHook.generateContent(request); // Use aiServiceHook
 
         if (result.success && result.data) {
           const historyEntry: GenerationHistory = {
@@ -159,24 +159,24 @@ export function AIProvider({ children }: { children: React.ReactNode }) {
         dispatch({ type: 'SET_GENERATING', payload: false });
         return result;
       }, { action: 'generate-content' });
-    }, [aiService, wrapAsync]),
+    }, [aiServiceHook, wrapAsync]), // Use aiServiceHook
 
     setApiKey: useCallback(async (providerId: string, apiKey: string) => {
-      return await aiService.setApiKey(providerId, apiKey);
-    }, [aiService]),
+      return await aiServiceHook.setApiKey(providerId, apiKey); // Use aiServiceHook
+    }, [aiServiceHook]), // Use aiServiceHook
 
     getApiKey: useCallback(async (providerId: string) => {
-      return await aiService.getApiKey(providerId);
-    }, [aiService]),
+      return await aiServiceHook.getApiKey(providerId); // Use aiServiceHook
+    }, [aiServiceHook]), // Use aiServiceHook
 
     removeApiKey: useCallback(async (providerId: string) => {
-      return await aiService.removeApiKey(providerId);
-    }, [aiService]),
+      return await aiServiceHook.removeApiKey(providerId); // Use aiServiceHook
+    }, [aiServiceHook]), // Use aiServiceHook
 
-    updateSettings: useCallback((settings: SecureAISettings) => {
-      aiService.updateSettings(settings);
+    updateSettings: useCallback((settings: AISettings) => { // Updated to AISettings
+      aiServiceHook.updateSettings(settings); // Use aiServiceHook
       dispatch({ type: 'UPDATE_SETTINGS', payload: settings });
-    }, [aiService]),
+    }, [aiServiceHook]), // Use aiServiceHook
 
     clearHistory: useCallback(() => {
       dispatch({ type: 'CLEAR_HISTORY' });
@@ -184,12 +184,12 @@ export function AIProvider({ children }: { children: React.ReactNode }) {
 
     refreshMetrics: useCallback(() => {
       try {
-        const metrics = aiService.getServiceMetrics();
+        const metrics = aiServiceHook.getServiceMetrics(); // Use aiServiceHook
         dispatch({ type: 'UPDATE_METRICS', payload: metrics });
       } catch (error) {
         reportError(error, { action: 'refresh-metrics' });
       }
-    }, [aiService, reportError])
+    }, [aiServiceHook, reportError]) // Use aiServiceHook
   };
 
   return (
