@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useReducer, useCallback, useEffect, useRef } from 'react';
-import { Project, Character, StoryArc, StoryNode, StoryEdge, StoryPlannerData, StoryNodeType, TimelineEvent, DateType } from '../types';
+import { Project, Character, StoryArc, StoryNode, StoryEdge, StoryPlannerData, StoryNodeType, TimelineEvent, DateType, ProjectTemplate, TemplateSubEntity, TemplateStoryEdge } from '../types';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import { useAsyncErrorHandler } from '../hooks/useAsyncErrorHandler';
 import { debounce } from '../utils/debounce';
@@ -56,7 +56,7 @@ interface ProjectContextValue {
     updateTimelineEvent: (id: string, updates: Partial<TimelineEvent>) => void;
     deleteTimelineEvent: (id: string) => void;
     saveProject: () => Promise<void>;
-    createNewProject: () => void;
+    createNewProject: (confirmCallback?: () => boolean, template?: ProjectTemplate) => void;
   };
 }
 
@@ -529,18 +529,130 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
       }, { action: 'save-project' });
     }, [state.currentProject, setStoredProject, wrapAsync]),
 
-    createNewProject: useCallback((confirmCallback?: () => boolean) => {
-      // If there are unsaved changes, use the provided callback for confirmation
-      // The callback should return true to proceed or false to cancel
+    createNewProject: useCallback((confirmCallback?: () => boolean, template?: ProjectTemplate) => {
       if (state.isDirty) {
-        const shouldProceed = confirmCallback ? confirmCallback() : true;
+        const shouldProceed = confirmCallback ? confirmCallback() : window.confirm("You have unsaved changes. Are you sure you want to create a new project? Your current changes will be lost.");
         if (!shouldProceed) {
           return;
         }
       }
-      
-      const newProject = createDefaultProject();
-      dispatch({ type: 'SET_PROJECT', payload: newProject });
+
+      if (template) {
+        const newProjectBase = createDefaultProject(); // Get all default fields
+        const newProject: Project = {
+          ...newProjectBase,
+          id: crypto.randomUUID(), // Always new ID
+          createdAt: new Date(),    // Always new date
+          updatedAt: new Date(),    // Always new date
+
+          // Overwrite with template fields if they exist
+          title: template.title || newProjectBase.title,
+          description: template.description || newProjectBase.description,
+          genre: template.genre || newProjectBase.genre,
+          targetWordCount: template.targetWordCount || newProjectBase.targetWordCount,
+          content: template.content || newProjectBase.content,
+
+          characters: [],
+          storyArcs: [],
+          timelineEvents: [],
+          storyPlannerData: { nodes: [], edges: [] },
+        };
+
+        const characterIdMap = new Map<string, string>();
+        if (template.characters) {
+          newProject.characters = template.characters.map(tc => {
+            const newCharId = crypto.randomUUID();
+            if (tc.templateId) characterIdMap.set(tc.templateId, newCharId);
+            // Ensure all required fields are present
+            return {
+              role: 'supporting', // Default role if not in template
+              backstory: '',
+              traits: [],
+              relationships: [],
+              notes: '',
+              ...tc,
+              id: newCharId,
+              createdAt: newProject.createdAt,
+              updatedAt: newProject.updatedAt,
+            } as Character;
+          });
+        }
+
+        const storyArcIdMap = new Map<string, string>();
+        if (template.storyArcs) {
+          newProject.storyArcs = template.storyArcs.map(tsa => {
+            const newArcId = crypto.randomUUID();
+            if (tsa.templateId) storyArcIdMap.set(tsa.templateId, newArcId);
+            const updatedLinkedCharIds = (tsa.characters || []).map(charTemplateId => characterIdMap.get(charTemplateId) || charTemplateId);
+            return {
+              type: 'main', // Default type
+              acts: [],
+              status: 'planning', // Default status
+              notes: '',
+              ...tsa,
+              id: newArcId,
+              characters: updatedLinkedCharIds,
+              createdAt: newProject.createdAt,
+              updatedAt: newProject.updatedAt,
+            } as StoryArc;
+          });
+        }
+
+        if (template.timelineEvents) {
+          newProject.timelineEvents = template.timelineEvents.map(tte => {
+            const newEventId = crypto.randomUUID();
+            return {
+              description: '', // Default if not in template
+              tags: [],
+              linkedCharacterIds: (tte.linkedCharacterIds || []).map(charTemplateId => characterIdMap.get(charTemplateId) || charTemplateId),
+              linkedStoryArcIds: (tte.linkedStoryArcIds || []).map(arcTemplateId => storyArcIdMap.get(arcTemplateId) || arcTemplateId),
+              ...tte,
+              id: newEventId,
+              createdAt: newProject.createdAt,
+              updatedAt: newProject.updatedAt,
+            } as TimelineEvent;
+          });
+        }
+
+        if (template.storyPlannerData) {
+          const nodeIdMap = new Map<string, string>();
+          if (template.storyPlannerData.nodes) {
+            newProject.storyPlannerData.nodes = template.storyPlannerData.nodes.map(tn => {
+              const newNodeId = crypto.randomUUID();
+              if (tn.templateId) nodeIdMap.set(tn.templateId, newNodeId);
+              return {
+                content: '', // Default content if not in template
+                color: undefined,
+                linkedCharacterId: tn.linkedCharacterId ? (characterIdMap.get(tn.linkedCharacterId) || tn.linkedCharacterId) : undefined,
+                linkedStoryArcId: tn.linkedStoryArcId ? (storyArcIdMap.get(tn.linkedStoryArcId) || tn.linkedStoryArcId) : undefined,
+                ...tn,
+                id: newNodeId,
+                createdAt: newProject.createdAt,
+                updatedAt: newProject.updatedAt,
+              } as StoryNode;
+            });
+          }
+          if (template.storyPlannerData.edges) {
+            newProject.storyPlannerData.edges = template.storyPlannerData.edges.map(te => {
+              return {
+                label: '', // Default label if not in template
+                ...te,
+                id: crypto.randomUUID(),
+                sourceNodeId: nodeIdMap.get(te.sourceNodeTemplateId) || te.sourceNodeTemplateId,
+                targetNodeId: nodeIdMap.get(te.targetNodeTemplateId) || te.targetNodeTemplateId,
+                createdAt: newProject.createdAt,
+                updatedAt: newProject.updatedAt,
+              } as StoryEdge;
+            });
+          }
+        }
+        dispatch({ type: 'SET_PROJECT', payload: newProject });
+
+      } else {
+        // Original logic for blank project
+        const newBlankProject = createDefaultProject();
+        dispatch({ type: 'SET_PROJECT', payload: newBlankProject });
+      }
     }, [state.isDirty])
   };
 

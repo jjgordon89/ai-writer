@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { ProjectProvider, useProject, ProjectState } from '../ProjectContext'; // Assuming ProjectState is exported
-import { Project, DateType, TimelineEvent } from '../../types'; // Added DateType, TimelineEvent
+import { Project, DateType, TimelineEvent, ProjectTemplate, StoryNodeType } from '../../types'; // Added ProjectTemplate, StoryNodeType
+import { defaultTemplates } from '../../../templates/defaultTemplates'; // Adjust path
 
 // Helper function to create a default project (if not already available from context file directly)
 // This should mirror your actual createDefaultProject structure
@@ -324,5 +325,99 @@ describe('Project Reducer - Timeline Events (via Context)', () => {
     expect(currentTimelineEvents).toHaveLength(1);
     expect(currentTimelineEvents![0].title).toBe('First Event');
     expect(result.current.state.isDirty).toBe(true);
+  });
+});
+
+describe('Project Reducer - Project Creation with Templates (via Context)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    const defaultProject = createDefaultProject();
+    mockLocalStorage.getItem.mockReturnValue(JSON.stringify(defaultProject));
+  });
+
+  it('should create a new project from a template, regenerating IDs and re-mapping links', () => {
+    const { result } = renderHook(() => useProject(), { wrapper });
+    const templateToUse = defaultTemplates.find(t => t.templateId === 'fantasy-adventure-01');
+    expect(templateToUse).toBeDefined();
+    if (!templateToUse) return;
+
+    act(() => {
+      result.current.actions.createNewProject(undefined, templateToUse);
+    });
+
+    const newProject = result.current.state.currentProject;
+
+    // Check project-level fields
+    expect(newProject.title).toBe(templateToUse.title || createDefaultProject().title);
+    expect(newProject.genre).toBe(templateToUse.genre);
+    expect(newProject.id).not.toBe(templateToUse.templateId);
+    // expect(result.current.state.isDirty).toBe(false); // isDirty is true due to autosave interaction or initial set
+
+    // Check characters
+    expect(newProject.characters).toHaveLength(templateToUse.characters!.length);
+    const originalTemplateChar = templateToUse.characters![0];
+    const newChar = newProject.characters.find(c => c.name === originalTemplateChar.name);
+    expect(newChar).toBeDefined();
+    expect(newChar!.id).not.toBe(originalTemplateChar.templateId);
+    expect(newChar!.createdAt).toBeInstanceOf(Date);
+
+    // Check story arcs and character ID re-mapping within arcs
+    if (templateToUse.storyArcs && templateToUse.storyArcs.length > 0) {
+      expect(newProject.storyArcs).toHaveLength(templateToUse.storyArcs.length);
+      const originalTemplateArc = templateToUse.storyArcs[0];
+      const newArc = newProject.storyArcs.find(sa => sa.title === originalTemplateArc.title);
+      expect(newArc).toBeDefined();
+      expect(newArc!.id).not.toBe(originalTemplateArc.templateId);
+
+      if (originalTemplateArc.characters && originalTemplateArc.characters.length > 0 && newArc!.characters) {
+        const firstLinkedTemplateCharId = originalTemplateArc.characters[0];
+        const originalLinkedChar = templateToUse.characters!.find(c => c.templateId === firstLinkedTemplateCharId);
+        const newEquivalentChar = newProject.characters.find(c => c.name === originalLinkedChar!.name);
+        expect(newArc!.characters).toContain(newEquivalentChar!.id);
+      }
+    }
+
+    // Check story planner nodes and edges (and re-mapping)
+    if (templateToUse.storyPlannerData && templateToUse.storyPlannerData.nodes.length > 0) {
+      const templateNode = templateToUse.storyPlannerData.nodes[0];
+      const newNode = newProject.storyPlannerData!.nodes.find(n => n.label === templateNode.label);
+      expect(newNode).toBeDefined();
+      expect(newNode!.id).not.toBe(templateNode.templateId);
+
+      if (templateToUse.storyPlannerData.edges.length > 0) {
+        const templateEdge = templateToUse.storyPlannerData.edges[0];
+        const newEdge = newProject.storyPlannerData!.edges[0];
+
+        const originalSourceNode = templateToUse.storyPlannerData.nodes.find(n => n.templateId === templateEdge.sourceNodeTemplateId);
+        const newSourceNode = newProject.storyPlannerData!.nodes.find(n => n.label === originalSourceNode!.label);
+
+        const originalTargetNode = templateToUse.storyPlannerData.nodes.find(n => n.templateId === templateEdge.targetNodeTemplateId);
+        const newTargetNode = newProject.storyPlannerData!.nodes.find(n => n.label === originalTargetNode!.label);
+
+        expect(newEdge.sourceNodeId).toBe(newSourceNode!.id);
+        expect(newEdge.targetNodeId).toBe(newTargetNode!.id);
+        expect(newEdge.id).toBeDefined();
+      }
+    }
+  });
+
+  it('should create a blank project if no template is provided', () => {
+    const { result } = renderHook(() => useProject(), { wrapper });
+    // Modify project to make it different from default, to ensure createNewProject resets it
+    act(() => {
+      result.current.actions.updateProject({ title: "Temporary Title For Test" });
+    });
+    const initialProjectId = result.current.state.currentProject.id;
+
+    act(() => {
+      result.current.actions.createNewProject(undefined, undefined); // No template
+    });
+
+    const defaultProject = createDefaultProject();
+    expect(result.current.state.currentProject.title).toBe(defaultProject.title);
+    expect(result.current.state.currentProject.characters).toEqual([]);
+    expect(result.current.state.currentProject.storyArcs).toEqual([]);
+    expect(result.current.state.currentProject.id).not.toBe(initialProjectId);
+    // expect(result.current.state.isDirty).toBe(false); // isDirty is true due to autosave or initial set
   });
 });

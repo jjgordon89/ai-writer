@@ -1,12 +1,16 @@
-import React from 'react';
+import React, { useState } from 'react'; // Added useState
 import { Header } from './Header';
 import { useProject, useUI } from '../../contexts';
 import { useAsyncErrorHandler } from '../../hooks/useAsyncErrorHandler';
+// Removed: import { defaultTemplates } from '../../templates/defaultTemplates';
+import TemplateSelectionModal from '../templates/TemplateSelectionModal'; // Adjust path
+import { ProjectTemplate } from '../../types'; // Adjust path
 
 export function HeaderContainer() {
   const { state: projectState, actions: projectActions } = useProject();
   const { actions: uiActions } = useUI();
   const { wrapAsync } = useAsyncErrorHandler({ component: 'HeaderContainer' });
+  const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
 
   const handleSave = async () => {
     await wrapAsync(
@@ -16,7 +20,12 @@ export function HeaderContainer() {
   };
 
   const handleNewProject = () => {
-    projectActions.createNewProject();
+    setIsTemplateModalOpen(true);
+  };
+
+  const handleTemplateSelectedInModal = (template?: ProjectTemplate) => {
+    projectActions.createNewProject(undefined, template);
+    setIsTemplateModalOpen(false);
   };
 
   const handleSettings = () => {
@@ -28,13 +37,20 @@ export function HeaderContainer() {
   };
 
   return (
-    <Header
-      currentProject={projectState.currentProject.title}
-      onSave={handleSave}
-      onSettings={handleSettings}
-      onNewProject={handleNewProject}
-      onExportImport={handleExportImport}
-      isSaving={projectState.isSaving}
-    />
+    <>
+      <Header
+        currentProject={projectState.currentProject.title}
+        onSave={handleSave}
+        onSettings={handleSettings}
+        onNewProject={handleNewProject}
+        onExportImport={handleExportImport}
+        isSaving={projectState.isSaving}
+      />
+      <TemplateSelectionModal
+        isOpen={isTemplateModalOpen}
+        onClose={() => setIsTemplateModalOpen(false)}
+        onTemplateSelected={handleTemplateSelectedInModal}
+      />
+    </>
   );
 }
