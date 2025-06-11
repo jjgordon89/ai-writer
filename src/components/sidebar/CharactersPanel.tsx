@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Character, CharacterRelationship } from '../../types';
+import { useAI } from '../../contexts/AIContext';
 import { Plus, Edit2, Users, Heart, Sword, User, Link, Trash2, ArrowRight } from 'lucide-react';
 
 interface CharactersPanelProps {
@@ -376,6 +377,7 @@ interface CharacterFormProps {
 }
 
 function CharacterForm({ character, allCharacters, onSave, onCancel, onDelete }: CharacterFormProps) {
+  const { generateContent } = useAI();
   const [formData, setFormData] = useState({
     name: character?.name || '',
     role: character?.role || 'supporting' as const,
@@ -385,6 +387,128 @@ function CharacterForm({ character, allCharacters, onSave, onCancel, onDelete }:
     traits: character?.traits.join(', ') || '',
     notes: character?.notes || '',
   });
+
+  const [previousDescription, setPreviousDescription] = useState<string | null>(null);
+  const [previousBackstory, setPreviousBackstory] = useState<string | null>(null);
+  const [previousTraits, setPreviousTraits] = useState<string | null>(null);
+
+  const handleSuggestWithAI = async (fieldName: "Description" | "Backstory" | "Traits") => {
+    let prompt = `Generate a short and compelling ${fieldName.toLowerCase()} for a character named "${formData.name}", who is a ${formData.role}.`;
+
+    // Add existing fields to the prompt for better context
+    if (fieldName === "Description") {
+      if (formData.backstory) prompt += `\nCharacter's current backstory: ${formData.backstory}`;
+      if (formData.traits) prompt += `\nCharacter's current traits: ${formData.traits}`;
+    } else if (fieldName === "Backstory") {
+      if (formData.description) prompt += `\nCharacter's current description: ${formData.description}`;
+      if (formData.traits) prompt += `\nCharacter's current traits: ${formData.traits}`;
+    } else if (fieldName === "Traits") {
+      prompt = `Suggest a comma-separated list of 3-5 traits for a character named "${formData.name}", who is a ${formData.role}.`;
+      if (formData.description) prompt += `\nCharacter's current description: ${formData.description}`;
+      if (formData.backstory) prompt += `\nCharacter's current backstory: ${formData.backstory}`;
+    }
+    if (formData.age) prompt += `\nThe character is ${formData.age} years old.`;
+
+    console.log(`Generating ${fieldName} with prompt:`, prompt);
+    try {
+      const suggestion = await generateContent(prompt);
+      if (suggestion) {
+        if (fieldName === "Description") {
+          setPreviousDescription(formData.description);
+          setFormData({ ...formData, description: suggestion });
+        } else if (fieldName === "Backstory") {
+          setPreviousBackstory(formData.backstory);
+          setFormData({ ...formData, backstory: suggestion });
+        } else if (fieldName === "Traits") {
+          setPreviousTraits(formData.traits);
+          setFormData({ ...formData, traits: suggestion });
+        }
+      } else {
+        console.log("AI did not return a suggestion.");
+      }
+    } catch (error) {
+      console.error(`Error generating ${fieldName}:`, error);
+      // Optionally, show an error message to the user
+    }
+  };
+
+  const handleGenerateFullProfile = async () => {
+    if (!formData.name || !formData.role) {
+      alert("Please enter a Name and Role before generating a full profile.");
+      return;
+    }
+    // Prompt for a JSON object
+    const prompt = `Generate a full character profile for a character named "${formData.name}", who is a ${formData.role}. Return the response as a JSON object with the following keys: "description" (string), "backstory" (string), and "traits" (string, comma-separated). Example: {"description": "A brave knight", "backstory": "Born in a small village...", "traits": "brave, loyal, kind"}`;
+    console.log("Generating full profile with prompt:", prompt);
+    try {
+      const fullProfileJSON = await generateContent(prompt);
+      if (fullProfileJSON) {
+        console.log("AI Generated Full Profile (Raw JSON):", fullProfileJSON);
+        try {
+          const parsedProfile = JSON.parse(fullProfileJSON);
+
+          setPreviousDescription(formData.description);
+          setPreviousBackstory(formData.backstory);
+          setPreviousTraits(formData.traits);
+
+          setFormData({
+            ...formData,
+            description: parsedProfile.description || formData.description,
+            backstory: parsedProfile.backstory || formData.backstory,
+            traits: parsedProfile.traits || formData.traits,
+          });
+        } catch (parseError) {
+          console.error("Error parsing AI response JSON:", parseError);
+          alert("Received an invalid format from AI. Please try again.");
+        }
+      } else {
+        console.log("AI did not return a full profile.");
+      }
+    } catch (error) {
+      console.error("Error generating full profile:", error);
+      alert("Failed to generate full profile. Please check console for details.");
+    }
+  };
+
+  const handleUndo = (fieldName: "Description" | "Backstory" | "Traits") => {
+    if (fieldName === "Description" && previousDescription !== null) {
+      setFormData({ ...formData, description: previousDescription });
+      setPreviousDescription(null);
+    } else if (fieldName === "Backstory" && previousBackstory !== null) {
+      setFormData({ ...formData, backstory: previousBackstory });
+      setPreviousBackstory(null);
+    } else if (fieldName === "Traits" && previousTraits !== null) {
+      setFormData({ ...formData, traits: previousTraits });
+      setPreviousTraits(null);
+    }
+  };
+
+  const handleUndoAll = () => {
+    let changesMade = false;
+    const newFormData = { ...formData };
+
+    if (previousDescription !== null) {
+      newFormData.description = previousDescription;
+      changesMade = true;
+    }
+    if (previousBackstory !== null) {
+      newFormData.backstory = previousBackstory;
+      changesMade = true;
+    }
+    if (previousTraits !== null) {
+      newFormData.traits = previousTraits;
+      changesMade = true;
+    }
+
+    if (changesMade) {
+      setFormData(newFormData);
+      setPreviousDescription(null);
+      setPreviousBackstory(null);
+      setPreviousTraits(null);
+    }
+  };
+
+  const showUndoAll = previousDescription !== null || previousBackstory !== null || previousTraits !== null;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -464,12 +588,39 @@ function CharacterForm({ character, allCharacters, onSave, onCancel, onDelete }:
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Description
-          </label>
+          <div className="flex items-center justify-between mb-1">
+            <label className="block text-sm font-medium text-gray-700">
+              Description
+            </label>
+            <label className="block text-sm font-medium text-gray-700">
+              Description
+            </label>
+            <div className="flex space-x-2">
+              {previousDescription !== null && (
+                <button
+                  type="button"
+                  onClick={() => handleUndo("Description")}
+                  className="text-xs text-gray-500 hover:text-gray-700"
+                >
+                  Undo
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => handleSuggestWithAI("Description")}
+                className="text-xs text-indigo-600 hover:text-indigo-800"
+              >
+                Suggest with AI
+              </button>
+            </div>
+          </div>
           <textarea
             value={formData.description}
-            onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+            onChange={(e) => {
+              setFormData({ ...formData, description: e.target.value });
+              // If user types, AI suggestion is stale, so clear previous state for this field
+              if (previousDescription !== null) setPreviousDescription(null);
+            }}
             rows={3}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
             placeholder="Physical appearance, personality overview..."
@@ -477,12 +628,38 @@ function CharacterForm({ character, allCharacters, onSave, onCancel, onDelete }:
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Backstory
-          </label>
+          <div className="flex items-center justify-between mb-1">
+            <label className="block text-sm font-medium text-gray-700">
+              Backstory
+            </label>
+            <label className="block text-sm font-medium text-gray-700">
+              Backstory
+            </label>
+            <div className="flex space-x-2">
+              {previousBackstory !== null && (
+                <button
+                  type="button"
+                  onClick={() => handleUndo("Backstory")}
+                  className="text-xs text-gray-500 hover:text-gray-700"
+                >
+                  Undo
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => handleSuggestWithAI("Backstory")}
+                className="text-xs text-indigo-600 hover:text-indigo-800"
+              >
+                Suggest with AI
+              </button>
+            </div>
+          </div>
           <textarea
             value={formData.backstory}
-            onChange={(e) => setFormData({ ...formData, backstory: e.target.value })}
+            onChange={(e) => {
+              setFormData({ ...formData, backstory: e.target.value });
+              if (previousBackstory !== null) setPreviousBackstory(null);
+            }}
             rows={4}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
             placeholder="Character history, motivations, key events..."
@@ -490,13 +667,39 @@ function CharacterForm({ character, allCharacters, onSave, onCancel, onDelete }:
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Traits
-          </label>
+          <div className="flex items-center justify-between mb-1">
+            <label className="block text-sm font-medium text-gray-700">
+              Traits
+            </label>
+            <label className="block text-sm font-medium text-gray-700">
+              Traits
+            </label>
+            <div className="flex space-x-2">
+              {previousTraits !== null && (
+                <button
+                  type="button"
+                  onClick={() => handleUndo("Traits")}
+                  className="text-xs text-gray-500 hover:text-gray-700"
+                >
+                  Undo
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => handleSuggestWithAI("Traits")}
+                className="text-xs text-indigo-600 hover:text-indigo-800"
+              >
+                Suggest with AI
+              </button>
+            </div>
+          </div>
           <input
             type="text"
             value={formData.traits}
-            onChange={(e) => setFormData({ ...formData, traits: e.target.value })}
+            onChange={(e) => {
+              setFormData({ ...formData, traits: e.target.value });
+              if (previousTraits !== null) setPreviousTraits(null);
+            }}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
             placeholder="brave, stubborn, witty (separate with commas)"
           />
@@ -514,6 +717,30 @@ function CharacterForm({ character, allCharacters, onSave, onCancel, onDelete }:
             placeholder="Additional notes, development ideas..."
           />
         </div>
+
+        {!character && (
+          <div className="pt-2">
+            <button
+              type="button"
+              onClick={handleGenerateFullProfile}
+              className="w-full bg-purple-600 text-white py-2 px-4 rounded-lg hover:bg-purple-700 transition-colors"
+            >
+              Generate Full Profile with AI
+            </button>
+          </div>
+        )}
+
+        {showUndoAll && !character && ( // Only show Undo All for new characters where profile was generated
+          <div className="pt-2">
+            <button
+              type="button"
+              onClick={handleUndoAll}
+              className="w-full bg-gray-200 text-gray-700 py-2 px-4 rounded-lg hover:bg-gray-300 transition-colors"
+            >
+              Undo All AI Changes
+            </button>
+          </div>
+        )}
 
         <div className="flex space-x-3 pt-4">
           <button
