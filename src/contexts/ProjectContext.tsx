@@ -1,11 +1,11 @@
 import React, { createContext, useContext, useReducer, useCallback, useEffect, useRef } from 'react';
 import { Project, Character, StoryArc } from '../types';
-import { useLocalStorage } from '../hooks/useLocalStorage';
+import { sqliteService } from '../services/sqliteService';
 import { useAsyncErrorHandler } from '../hooks/useAsyncErrorHandler';
 import { debounce } from '../utils/debounce';
 
 interface ProjectState {
-  currentProject: Project;
+  currentProject: Project | null; // Can be null initially
   isLoading: boolean;
   isSaving: boolean;
   lastSaved: Date | null;
@@ -216,33 +216,70 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
 }
 
 export function ProjectProvider({ children }: { children: React.ReactNode }) {
-  const [storedProject, setStoredProject] = useLocalStorage<Project>(
-    'currentProject',
-    createDefaultProject()
-  );
-
   const [state, dispatch] = useReducer(projectReducer, {
-    currentProject: storedProject,
-    isLoading: false,
+    currentProject: null, // Initialize with null, will be loaded from DB
+    isLoading: true, // Start with loading true
     isSaving: false,
     lastSaved: null,
-    isDirty: false
+    isDirty: false,
   });
 
   const { wrapAsync } = useAsyncErrorHandler({
-    component: 'ProjectProvider'
+    component: 'ProjectProvider',
   });
+
+  // Initialize and load project from SQLite
+  useEffect(() => {
+    const initializeDB = async () => {
+      dispatch({ type: 'SET_LOADING', payload: true });
+      try {
+        await sqliteService.initialize();
+        let project = await sqliteService.loadProject();
+        if (project) {
+          dispatch({ type: 'SET_PROJECT', payload: project });
+        } else {
+          console.log('No project found in DB, creating default project.');
+          project = createDefaultProject();
+          await sqliteService.saveProject(project);
+          dispatch({ type: 'SET_PROJECT', payload: project });
+        }
+      } catch (error) {
+        console.error('Failed to initialize/load project:', error);
+        // Optionally, use useAsyncErrorHandler or set an error state here
+        // For now, we'll just log it and potentially load a default project
+        // or leave the user in an error state.
+        // Fallback to a new default project if DB operations fail critically
+        const defaultProject = createDefaultProject();
+        dispatch({ type: 'SET_PROJECT', payload: defaultProject });
+         // Consider if you want to attempt saving this default project if DB init failed
+      } finally {
+        dispatch({ type: 'SET_LOADING', payload: false });
+      }
+    };
+
+    wrapAsync(initializeDB, { action: 'initialize-db' })();
+  }, [wrapAsync]);
+
 
   // Create debounced auto-save function
   const debouncedSave = useRef(
-    debounce((project: Project) => {
-      setStoredProject(project);
-    }, 1000) // Save after 1 second of inactivity
+    debounce(async (project: Project) => {
+      if (!project) return;
+      dispatch({ type: 'SET_SAVING', payload: true });
+      try {
+        await sqliteService.saveProject(project);
+        dispatch({ type: 'MARK_SAVED' });
+      } catch (error) {
+        console.error('Error in debounced save:', error);
+        dispatch({ type: 'SET_SAVING', payload: false }); // Reset saving state on error
+         // Optionally, use useAsyncErrorHandler or set an error state
+      }
+    }, 1500) // Save after 1.5 seconds of inactivity
   );
 
-  // Auto-save to localStorage when project changes (debounced)
+  // Auto-save to SQLite when project changes (debounced)
   useEffect(() => {
-    if (state.isDirty) {
+    if (state.isDirty && state.currentProject) {
       debouncedSave.current(state.currentProject);
     }
   }, [state.currentProject, state.isDirty]);
@@ -288,22 +325,20 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
     }, []),
 
     saveProject: useCallback(async () => {
+      if (!state.currentProject) return;
+      // Cancel any pending debounced save
+      debouncedSave.current.cancel();
+
       await wrapAsync(async () => {
         dispatch({ type: 'SET_SAVING', payload: true });
-        
-        // Simulate save delay for user feedback
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        
-        // Save to localStorage (already handled by useEffect)
-        setStoredProject(state.currentProject);
-        
+        if (state.currentProject) { // Check again, state might have changed
+          await sqliteService.saveProject(state.currentProject);
+        }
         dispatch({ type: 'MARK_SAVED' });
-      }, { action: 'save-project' });
-    }, [state.currentProject, setStoredProject, wrapAsync]),
+      }, { action: 'save-project-explicit' })();
+    }, [state.currentProject, wrapAsync]),
 
     createNewProject: useCallback((confirmCallback?: () => boolean) => {
-      // If there are unsaved changes, use the provided callback for confirmation
-      // The callback should return true to proceed or false to cancel
       if (state.isDirty) {
         const shouldProceed = confirmCallback ? confirmCallback() : true;
         if (!shouldProceed) {
@@ -311,9 +346,14 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
         }
       }
       
-      const newProject = createDefaultProject();
-      dispatch({ type: 'SET_PROJECT', payload: newProject });
-    }, [state.isDirty])
+      wrapAsync(async () => {
+        dispatch({ type: 'SET_LOADING', payload: true });
+        const newProject = createDefaultProject();
+        await sqliteService.saveProject(newProject);
+        dispatch({ type: 'SET_PROJECT', payload: newProject });
+        dispatch({ type: 'SET_LOADING', payload: false });
+      }, { action: 'create-new-project' })();
+    }, [state.isDirty, wrapAsync])
   };
 
   return (
