@@ -1,16 +1,17 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { AsyncErrorHandler, ErrorSanitizer } from '../utils/errorSanitization';
 
+// Define interface to match the one in errorSanitization.ts
 interface ErrorContext {
-  component?: string;
-  action?: string;
-  userId?: string;
-  metadata?: Record<string, any>;
+  component?: string | undefined;
+  action?: string | undefined;
+  userId?: string | undefined;
+  metadata?: Record<string, unknown> | undefined;
 }
 
 interface UseAsyncErrorHandlerOptions {
   component?: string;
-  onError?: (error: any) => void;
+  onError?: (error: ReturnType<typeof ErrorSanitizer.sanitizeForUser>) => void;
   showToast?: boolean;
 }
 
@@ -24,7 +25,7 @@ export function useAsyncErrorHandler(options: UseAsyncErrorHandlerOptions = {}) 
 
   const reportError = useCallback((error: unknown, context?: Partial<ErrorContext>) => {
     const fullContext: ErrorContext = {
-      component,
+      ...(component && { component }),
       ...context
     };
 
@@ -55,7 +56,8 @@ export function useAsyncErrorHandler(options: UseAsyncErrorHandlerOptions = {}) 
   ): Promise<T> => {
     return asyncFn().catch(error => {
       reportError(error, context);
-      throw error; // Re-throw for local handling if needed
+      // Don't re-throw - let the caller handle the error through reportError callback
+      throw error;
     });
   }, [reportError]);
 
@@ -70,9 +72,20 @@ export function useAsyncErrorHandler(options: UseAsyncErrorHandlerOptions = {}) 
     });
   }, [reportError]);
 
+  const handleAsync = useCallback(<T,>(
+    asyncFn: () => Promise<T>,
+    context?: Partial<ErrorContext>
+  ): Promise<T | null> => {
+    return asyncFn().catch(error => {
+      reportError(error, context);
+      return null; // Don't re-throw, return null to indicate error
+    });
+  }, [reportError]);
+
   return {
     reportError,
     wrapAsync,
-    safeAsync
+    safeAsync,
+    handleAsync
   };
 }

@@ -2,7 +2,7 @@
  * Secure AI Providers service with encrypted API key storage
  */
 
-import { secureStorage } from './secureStorage';
+import { enhancedSecureStorage } from './enhancedSecureStorage';
 import { InputSanitizer, FormValidator, RateLimiter } from '../utils/validation';
 
 export interface AIProvider {
@@ -15,12 +15,14 @@ export interface AIProvider {
   description: string;
 }
 
+export interface ProviderSettings {
+  endpoint?: string;
+  selectedModel?: string;
+  isEnabled: boolean;
+}
+
 export interface SecureAISettings {
-  providers: Record<string, {
-    endpoint?: string;
-    selectedModel?: string;
-    isEnabled: boolean;
-  }>;
+  providers: Record<string, ProviderSettings>;
   defaultProvider: string;
   temperature: number;
   maxTokens: number;
@@ -42,7 +44,29 @@ export interface AIResponse {
     promptTokens: number;
     completionTokens: number;
     totalTokens: number;
-  };
+  } | undefined;
+}
+
+interface RequestBody {
+  model?: string | undefined;
+  messages?: Array<{
+    role: string;
+    content: string;
+  }> | undefined;
+  temperature?: number | undefined;
+  max_tokens?: number | undefined;
+  inputs?: string | undefined;
+  parameters?: {
+    temperature?: number | undefined;
+    max_new_tokens?: number | undefined;
+    return_full_text?: boolean | undefined;
+  } | undefined;
+  prompt?: string | undefined;
+  stream?: boolean | undefined;
+  options?: {
+    temperature?: number | undefined;
+    num_predict?: number | undefined;
+  } | undefined;
 }
 
 export const AI_PROVIDERS: AIProvider[] = [
@@ -124,7 +148,7 @@ export class SecureAIService {
 
   async initialize(): Promise<void> {
     if (!this.isInitialized) {
-      await secureStorage.initialize();
+      await enhancedSecureStorage.initialize();
       this.isInitialized = true;
     }
   }
@@ -162,13 +186,13 @@ export class SecureAIService {
     // Get API key securely
     let apiKey: string | null = null;
     if (provider.requiresApiKey) {
-      apiKey = await secureStorage.getSecure(`apikey-${provider.id}`);
+      apiKey = await enhancedSecureStorage.getSecure(`apikey-${provider.id}`);
       if (!apiKey) {
         throw new Error(`API key required for ${provider.name}`);
       }
     }
 
-    const model = request.model || providerSettings.selectedModel || provider.models[0];
+    const model = request.model || providerSettings.selectedModel || provider.models[0] || 'default';
     const temperature = Math.max(0, Math.min(2, request.temperature ?? this.settings.temperature));
     const maxTokens = Math.max(1, Math.min(4000, request.maxTokens ?? this.settings.maxTokens));
 
@@ -222,7 +246,7 @@ export class SecureAIService {
     }
 
     // Store encrypted
-    await secureStorage.setSecure(`apikey-${providerId}`, sanitizedKey);
+    await enhancedSecureStorage.setSecure(`apikey-${providerId}`, sanitizedKey);
   }
 
   async getApiKey(providerId: string): Promise<string | null> {
@@ -230,7 +254,7 @@ export class SecureAIService {
       await this.initialize();
     }
 
-    return await secureStorage.getSecure(`apikey-${providerId}`);
+    return await enhancedSecureStorage.getSecure(`apikey-${providerId}`);
   }
 
   async removeApiKey(providerId: string): Promise<void> {
@@ -238,12 +262,12 @@ export class SecureAIService {
       await this.initialize();
     }
 
-    secureStorage.removeSecure(`apikey-${providerId}`);
+    enhancedSecureStorage.removeSecure(`apikey-${providerId}`);
   }
 
   private async callOpenAICompatible(
     provider: AIProvider,
-    settings: any,
+    settings: ProviderSettings,
     request: AIRequest,
     apiKey: string
   ): Promise<AIResponse> {
@@ -308,9 +332,9 @@ export class SecureAIService {
         provider: provider.name,
         model: request.model || 'unknown',
         usage: data.usage ? {
-          promptTokens: data.usage.prompt_tokens,
-          completionTokens: data.usage.completion_tokens,
-          totalTokens: data.usage.total_tokens
+          promptTokens: data.usage.prompt_tokens || 0,
+          completionTokens: data.usage.completion_tokens || 0,
+          totalTokens: data.usage.total_tokens || 0
         } : undefined
       };
     } catch (error) {
@@ -321,7 +345,7 @@ export class SecureAIService {
 
   private async callAnthropic(
     provider: AIProvider,
-    settings: any,
+    settings: ProviderSettings,
     request: AIRequest,
     apiKey: string
   ): Promise<AIResponse> {
@@ -374,9 +398,9 @@ export class SecureAIService {
         provider: provider.name,
         model: request.model || 'unknown',
         usage: data.usage ? {
-          promptTokens: data.usage.input_tokens,
-          completionTokens: data.usage.output_tokens,
-          totalTokens: data.usage.input_tokens + data.usage.output_tokens
+          promptTokens: data.usage.input_tokens || 0,
+          completionTokens: data.usage.output_tokens || 0,
+          totalTokens: (data.usage.input_tokens || 0) + (data.usage.output_tokens || 0)
         } : undefined
       };
     } catch (error) {
@@ -387,7 +411,7 @@ export class SecureAIService {
 
   private async callHuggingFace(
     provider: AIProvider,
-    settings: any,
+    settings: ProviderSettings,
     request: AIRequest,
     apiKey: string
   ): Promise<AIResponse> {
@@ -438,7 +462,7 @@ export class SecureAIService {
 
   private async callLocalProvider(
     provider: AIProvider,
-    settings: any,
+    settings: ProviderSettings,
     request: AIRequest
   ): Promise<AIResponse> {
     const baseUrl = settings.endpoint || provider.baseUrl;
@@ -448,23 +472,23 @@ export class SecureAIService {
     }
 
     let url: string;
-    let body: any;
+    let body: RequestBody;
 
     if (provider.id === 'ollama') {
       url = `${baseUrl}/api/generate`;
       body = {
-        model: request.model,
+        model: request.model || 'default',
         prompt: request.prompt,
         stream: false,
         options: {
-          temperature: request.temperature,
-          num_predict: request.maxTokens
+          temperature: request.temperature || 0.7,
+          num_predict: request.maxTokens || 1500
         }
       };
     } else {
       url = `${baseUrl}/chat/completions`;
       body = {
-        model: request.model,
+        model: request.model || 'default',
         messages: [
           {
             role: 'system',
@@ -475,8 +499,8 @@ export class SecureAIService {
             content: request.prompt
           }
         ],
-        temperature: request.temperature,
-        max_tokens: request.maxTokens
+        temperature: request.temperature || 0.7,
+        max_tokens: request.maxTokens || 1500
       };
     }
 
@@ -514,9 +538,9 @@ export class SecureAIService {
         provider: provider.name,
         model: request.model || 'unknown',
         usage: data.usage ? {
-          promptTokens: data.usage.prompt_tokens,
-          completionTokens: data.usage.completion_tokens,
-          totalTokens: data.usage.total_tokens
+          promptTokens: data.usage.prompt_tokens || 0,
+          completionTokens: data.usage.completion_tokens || 0,
+          totalTokens: data.usage.total_tokens || 0
         } : undefined
       };
     } catch (error) {
@@ -525,28 +549,32 @@ export class SecureAIService {
     }
   }
 
-  private handleAPIError(error: any, provider: AIProvider): Error {
-    if (error.name === 'AbortError') {
-      return new Error(`Request timeout for ${provider.name}. Please try again.`);
+  private handleAPIError(error: unknown, provider: AIProvider): Error {
+    if (error instanceof Error) {
+      if (error.name === 'AbortError') {
+        return new Error(`Request timeout for ${provider.name}. Please try again.`);
+      }
+      
+      if (error.message.includes('401') || error.message.includes('403')) {
+        return new Error(`Authentication failed for ${provider.name}. Please check your API key.`);
+      }
+      
+      if (error.message.includes('429')) {
+        return new Error(`Rate limit exceeded for ${provider.name}. Please try again later.`);
+      }
+      
+      if (error.message.includes('500') || error.message.includes('502') || error.message.includes('503')) {
+        return new Error(`${provider.name} service is temporarily unavailable. Please try again later.`);
+      }
+      
+      if (error.name === 'TypeError' && error.message.includes('fetch')) {
+        return new Error(`Unable to connect to ${provider.name}. Please check your internet connection${provider.type === 'local' ? ' and ensure the local service is running' : ''}.`);
+      }
+      
+      return new Error(error.message);
     }
     
-    if (error.message?.includes('401') || error.message?.includes('403')) {
-      return new Error(`Authentication failed for ${provider.name}. Please check your API key.`);
-    }
-    
-    if (error.message?.includes('429')) {
-      return new Error(`Rate limit exceeded for ${provider.name}. Please try again later.`);
-    }
-    
-    if (error.message?.includes('500') || error.message?.includes('502') || error.message?.includes('503')) {
-      return new Error(`${provider.name} service is temporarily unavailable. Please try again later.`);
-    }
-    
-    if (error.name === 'TypeError' && error.message?.includes('fetch')) {
-      return new Error(`Unable to connect to ${provider.name}. Please check your internet connection${provider.type === 'local' ? ' and ensure the local service is running' : ''}.`);
-    }
-    
-    return new Error(error.message || `An unexpected error occurred with ${provider.name}`);
+    return new Error(`An unexpected error occurred with ${provider.name}`);
   }
 
   updateSettings(newSettings: Partial<SecureAISettings>) {

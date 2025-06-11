@@ -1,12 +1,12 @@
 import '@testing-library/jest-dom';
-import { beforeAll, afterEach, afterAll } from 'vitest';
+import { beforeAll, afterEach, afterAll, vi } from 'vitest';
 import { cleanup } from '@testing-library/react';
 import { server } from './mocks/server';
 
 // Mock window.matchMedia
 Object.defineProperty(window, 'matchMedia', {
   writable: true,
-  value: vi.fn().mockImplementation(query => ({
+  value: vi.fn().mockImplementation((query: string) => ({
     matches: false,
     media: query,
     onchange: null,
@@ -21,11 +21,19 @@ Object.defineProperty(window, 'matchMedia', {
 // Mock crypto for tests
 Object.defineProperty(global, 'crypto', {
   value: {
-    getRandomValues: (arr: any) => arr.map(() => Math.floor(Math.random() * 256)),
+    getRandomValues: (arr: Uint8Array) => {
+      for (let i = 0; i < arr.length; i++) {
+        arr[i] = Math.floor(Math.random() * 256);
+      }
+      return arr;
+    },
+    randomUUID: () => 'test-uuid-' + Math.random().toString(36).substr(2, 9),
     subtle: {
       generateKey: vi.fn().mockResolvedValue({}),
       encrypt: vi.fn().mockResolvedValue(new ArrayBuffer(16)),
       decrypt: vi.fn().mockResolvedValue(new ArrayBuffer(16)),
+      importKey: vi.fn().mockResolvedValue({}),
+      deriveKey: vi.fn().mockResolvedValue({}),
     },
   },
 });

@@ -27,7 +27,7 @@ interface AIState {
   serviceMetrics: {
     requestCount: number;
     lastRequestTime: number;
-    sessionInfo: any;
+    sessionInfo: ReturnType<typeof import('../services/enhancedSecureStorage').enhancedSecureStorage.getSessionInfo> | null;
     rateLimitStatus: Record<string, number>;
   };
 }
@@ -45,7 +45,7 @@ type AIAction =
 interface AIContextValue {
   state: AIState;
   actions: {
-    generateContent: (request: any) => Promise<{ success: boolean; data?: any; error?: string }>;
+    generateContent: (request: import('../services/enhancedAIProviders').AIRequest) => Promise<{ success: boolean; data?: import('../services/enhancedAIProviders').AIResponse; error?: string }>;
     setApiKey: (providerId: string, apiKey: string) => Promise<{ success: boolean; error?: string }>;
     getApiKey: (providerId: string) => Promise<string | null>;
     removeApiKey: (providerId: string) => Promise<{ success: boolean; error?: string }>;
@@ -71,9 +71,10 @@ function aiReducer(state: AIState, action: AIAction): AIState {
     case 'SET_CURRENT_GENERATION':
       return { ...state, currentGeneration: action.payload };
 
-    case 'ADD_TO_HISTORY':
+    case 'ADD_TO_HISTORY': {
       const newHistory = [action.payload, ...state.generationHistory.slice(0, 49)]; // Keep last 50
       return { ...state, generationHistory: newHistory };
+    }
 
     case 'CLEAR_HISTORY':
       return { ...state, generationHistory: [] };
@@ -133,7 +134,7 @@ export function AIProvider({ children }: { children: React.ReactNode }) {
   }, [aiService, reportError]);
 
   const actions = {
-    generateContent: useCallback(async (request: any) => {
+    generateContent: useCallback(async (request: import('../services/enhancedAIProviders').AIRequest) => {
       return await wrapAsync(async () => {
         dispatch({ type: 'SET_GENERATING', payload: true });
         dispatch({ type: 'SET_CURRENT_GENERATION', payload: '' });

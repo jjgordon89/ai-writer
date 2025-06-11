@@ -5,17 +5,17 @@
 
 interface SanitizedError {
   message: string;
-  code?: string;
+  code?: string | undefined;
   type: 'user' | 'system' | 'network' | 'validation';
   timestamp: number;
   id: string;
 }
 
 interface ErrorContext {
-  component?: string;
-  action?: string;
-  userId?: string;
-  metadata?: Record<string, any>;
+  component?: string | undefined;
+  action?: string | undefined;
+  userId?: string | undefined;
+  metadata?: Record<string, unknown> | undefined;
 }
 
 export class ErrorSanitizer {
@@ -33,8 +33,8 @@ export class ErrorSanitizer {
     
     // File paths that might contain usernames
     /[C-Z]:\\Users\\[^\\]+/gi,
-    /\/home\/[^\/]+/gi,
-    /\/Users\/[^\/]+/gi,
+    /\/home\/[^/]+/gi,
+    /\/Users\/[^/]+/gi,
     
     // IP addresses (internal)
     /\b192\.168\.\d{1,3}\.\d{1,3}\b/gi,
@@ -42,7 +42,7 @@ export class ErrorSanitizer {
     /\b172\.(1[6-9]|2[0-9]|3[0-1])\.\d{1,3}\.\d{1,3}\b/gi,
     
     // URLs with potentially sensitive info
-    /https?:\/\/[^\s]+[\?\&].*[=][^\s&]+/gi
+    /https?:\/\/[^\s]+[?&].*[=][^\s&]+/gi
   ];
 
   private static readonly ERROR_MAPPINGS: Record<string, string> = {
@@ -83,12 +83,13 @@ export class ErrorSanitizer {
       // Extract base error information
       if (error instanceof Error) {
         message = error.message;
-        code = (error as any).code;
+        code = (error as unknown as Record<string, unknown>)['code'] as string;
       } else if (typeof error === 'string') {
         message = error;
       } else if (error && typeof error === 'object') {
-        message = (error as any).message || (error as any).error || 'Unknown error';
-        code = (error as any).code || (error as any).status;
+        const errorObj = error as Record<string, unknown>;
+        message = (errorObj['message'] as string) || (errorObj['error'] as string) || 'Unknown error';
+        code = (errorObj['code'] as string) || (errorObj['status'] as string);
       }
 
       // Determine error type
@@ -125,9 +126,9 @@ export class ErrorSanitizer {
   /**
    * Sanitize error for logging (removes sensitive data but keeps detail)
    */
-  static sanitizeForLogging(error: unknown, context?: ErrorContext): Record<string, any> {
+  static sanitizeForLogging(error: unknown, context?: ErrorContext): Record<string, unknown> {
     try {
-      let sanitized: Record<string, any> = {
+      let sanitized: Record<string, unknown> = {
         timestamp: Date.now(),
         id: this.generateErrorId(),
         context: context ? this.sanitizeContext(context) : undefined
@@ -139,19 +140,19 @@ export class ErrorSanitizer {
           name: error.name,
           message: this.sanitizeMessage(error.message),
           stack: this.sanitizeStackTrace(error.stack),
-          code: (error as any).code,
-          status: (error as any).status
+          code: (error as unknown as Record<string, unknown>)['code'],
+          status: (error as unknown as Record<string, unknown>)['status']
         };
       } else if (typeof error === 'string') {
-        sanitized.message = this.sanitizeMessage(error);
+        sanitized['message'] = this.sanitizeMessage(error);
       } else if (error && typeof error === 'object') {
         sanitized = {
           ...sanitized,
-          ...this.sanitizeObject(error as Record<string, any>)
+          ...this.sanitizeObject(error as Record<string, unknown>)
         };
       } else {
-        sanitized.message = 'Non-error value thrown';
-        sanitized.value = String(error).substring(0, 100);
+        sanitized['message'] = 'Non-error value thrown';
+        sanitized['value'] = String(error).substring(0, 100);
       }
 
       return sanitized;
@@ -200,7 +201,7 @@ export class ErrorSanitizer {
     }
 
     // Remove potentially dangerous characters
-    sanitized = sanitized.replace(/[<>\"']/g, '');
+    sanitized = sanitized.replace(/[<>"']/g, '');
 
     return sanitized;
   }
@@ -210,8 +211,8 @@ export class ErrorSanitizer {
 
     // Remove file paths that might contain usernames
     let sanitized = stack.replace(/[C-Z]:\\Users\\[^\\]+/g, 'C:\\Users\\[USER]');
-    sanitized = sanitized.replace(/\/home\/[^\/]+/g, '/home/[USER]');
-    sanitized = sanitized.replace(/\/Users\/[^\/]+/g, '/Users/[USER]');
+    sanitized = sanitized.replace(/\/home\/[^/]+/g, '/home/[USER]');
+    sanitized = sanitized.replace(/\/Users\/[^/]+/g, '/Users/[USER]');
 
     // Remove other sensitive patterns
     this.SENSITIVE_PATTERNS.forEach(pattern => {
@@ -221,8 +222,8 @@ export class ErrorSanitizer {
     return sanitized;
   }
 
-  private static sanitizeObject(obj: Record<string, any>): Record<string, any> {
-    const sanitized: Record<string, any> = {};
+  private static sanitizeObject(obj: Record<string, unknown>): Record<string, unknown> {
+    const sanitized: Record<string, unknown> = {};
 
     Object.keys(obj).forEach(key => {
       const value = obj[key];
@@ -232,7 +233,7 @@ export class ErrorSanitizer {
       
       // Recursively sanitize nested objects (with depth limit)
       if (value && typeof value === 'object' && key !== 'stack') {
-        sanitized[key] = this.sanitizeObject(value);
+        sanitized[key] = this.sanitizeObject(value as Record<string, unknown>);
       } else if (typeof value === 'string') {
         sanitized[key] = this.sanitizeMessage(value);
       } else {
@@ -247,11 +248,11 @@ export class ErrorSanitizer {
     const sanitized: ErrorContext = {};
 
     if (context.component) {
-      sanitized.component = context.component.replace(/[<>\"']/g, '');
+      sanitized.component = context.component.replace(/[<>"']/g, '');
     }
 
     if (context.action) {
-      sanitized.action = context.action.replace(/[<>\"']/g, '');
+      sanitized.action = context.action.replace(/[<>"']/g, '');
     }
 
     if (context.userId) {
@@ -324,7 +325,7 @@ export class ErrorSanitizer {
 
   private static secureLog(originalError: unknown, errorId: string, context?: ErrorContext): void {
     // Only log in development or when explicitly enabled
-    if (process.env.NODE_ENV === 'development') {
+    if (process.env['NODE_ENV'] === 'development') {
       console.group(`🔍 Error ${errorId}`);
       console.error('Original error:', originalError);
       if (context) {

@@ -6,7 +6,7 @@ import { WorldBuildingPanel } from '../sidebar/WorldBuildingPanel';
 import { CrossReferencesPanel } from '../sidebar/CrossReferencesPanel';
 import { AIPanelContainer } from '../sidebar/AIPanelContainer';
 import { PromptsPanel } from '../sidebar/PromptsPanel';
-import { useProject, useUI } from '../../contexts';
+import { useProject } from '../../contexts';
 import { EnhancedErrorBoundary } from '../common/EnhancedErrorBoundary';
 
 interface SidebarContentProps {
@@ -15,7 +15,6 @@ interface SidebarContentProps {
 
 export function SidebarContent({ activeTab }: SidebarContentProps) {
   const { state: projectState, actions: projectActions } = useProject();
-  const { actions: uiActions } = useUI();
 
   const renderPanel = () => {
     switch (activeTab) {

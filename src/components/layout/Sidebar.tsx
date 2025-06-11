@@ -1,11 +1,10 @@
-import React, { useState } from 'react';
-import { 
-  ChevronLeft, 
-  ChevronRight, 
-  Users, 
-  BookOpen, 
-  Bot, 
-  Target,
+import React from 'react';
+import {
+  ChevronLeft,
+  ChevronRight,
+  Users,
+  BookOpen,
+  Bot,
   Sparkles,
   FileText,
   Map,

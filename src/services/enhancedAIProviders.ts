@@ -4,7 +4,7 @@
 
 import { enhancedSecureStorage } from './enhancedSecureStorage';
 import { ErrorSanitizer } from '../utils/errorSanitization';
-import { InputSanitizer, FormValidator, RateLimiter } from '../utils/validation';
+import { InputSanitizer, RateLimiter } from '../utils/validation';
 
 export interface AIProvider {
   id: string;
@@ -16,12 +16,14 @@ export interface AIProvider {
   description: string;
 }
 
+export interface ProviderSettings {
+  endpoint?: string;
+  selectedModel?: string;
+  isEnabled: boolean;
+}
+
 export interface SecureAISettings {
-  providers: Record<string, {
-    endpoint?: string;
-    selectedModel?: string;
-    isEnabled: boolean;
-  }>;
+  providers: Record<string, ProviderSettings>;
   defaultProvider: string;
   temperature: number;
   maxTokens: number;
@@ -43,7 +45,36 @@ export interface AIResponse {
     promptTokens: number;
     completionTokens: number;
     totalTokens: number;
+  } | undefined;
+}
+
+interface ErrorData {
+  error?: {
+    message?: string;
   };
+  message?: string;
+}
+
+interface RequestBody {
+  model?: string | undefined;
+  messages?: Array<{
+    role: string;
+    content: string;
+  }> | undefined;
+  temperature?: number | undefined;
+  max_tokens?: number | undefined;
+  inputs?: string | undefined;
+  parameters?: {
+    temperature?: number | undefined;
+    max_new_tokens?: number | undefined;
+    return_full_text?: boolean | undefined;
+  } | undefined;
+  prompt?: string | undefined;
+  stream?: boolean | undefined;
+  options?: {
+    temperature?: number | undefined;
+    num_predict?: number | undefined;
+  } | undefined;
 }
 
 export const AI_PROVIDERS: AIProvider[] = [
@@ -219,7 +250,7 @@ export class EnhancedSecureAIService {
   getServiceMetrics(): {
     requestCount: number;
     lastRequestTime: number;
-    sessionInfo: any;
+    sessionInfo: ReturnType<typeof enhancedSecureStorage.getSessionInfo>;
     rateLimitStatus: Record<string, number>;
   } {
     const rateLimitStatus: Record<string, number> = {};
@@ -259,7 +290,7 @@ export class EnhancedSecureAIService {
     return {
       prompt: sanitizedPrompt,
       type: sanitizedType,
-      model: request.model,
+      model: request.model || 'default',
       temperature,
       maxTokens
     };
@@ -310,7 +341,7 @@ export class EnhancedSecureAIService {
 
   private async callProvider(
     provider: AIProvider,
-    settings: any,
+    settings: ProviderSettings,
     request: AIRequest,
     apiKey: string | null
   ): Promise<AIResponse> {
@@ -336,7 +367,7 @@ export class EnhancedSecureAIService {
 
   private async callOpenAICompatible(
     provider: AIProvider,
-    settings: any,
+    settings: ProviderSettings,
     request: AIRequest,
     apiKey: string
   ): Promise<AIResponse> {
@@ -390,7 +421,7 @@ export class EnhancedSecureAIService {
 
       if (!response.ok) {
         const errorText = await response.text();
-        let errorData: any = {};
+        let errorData: ErrorData = {};
         
         try {
           errorData = JSON.parse(errorText);
@@ -427,7 +458,7 @@ export class EnhancedSecureAIService {
 
   private async callAnthropic(
     provider: AIProvider,
-    settings: any,
+    settings: ProviderSettings,
     request: AIRequest,
     apiKey: string
   ): Promise<AIResponse> {
@@ -468,7 +499,7 @@ export class EnhancedSecureAIService {
 
       if (!response.ok) {
         const errorText = await response.text();
-        let errorData: any = {};
+        let errorData: ErrorData = {};
         
         try {
           errorData = JSON.parse(errorText);
@@ -505,7 +536,7 @@ export class EnhancedSecureAIService {
 
   private async callHuggingFace(
     provider: AIProvider,
-    settings: any,
+    settings: ProviderSettings,
     request: AIRequest,
     apiKey: string
   ): Promise<AIResponse> {
@@ -536,7 +567,7 @@ export class EnhancedSecureAIService {
 
       if (!response.ok) {
         const errorText = await response.text();
-        let errorData: any = {};
+        let errorData: ErrorData = {};
         
         try {
           errorData = JSON.parse(errorText);
@@ -544,7 +575,7 @@ export class EnhancedSecureAIService {
           errorData = { message: errorText };
         }
 
-        throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+        throw new Error(errorData.error?.message || errorData.message || `HTTP ${response.status}: ${response.statusText}`);
       }
 
       const data = await response.json();
@@ -571,7 +602,7 @@ export class EnhancedSecureAIService {
 
   private async callLocalProvider(
     provider: AIProvider,
-    settings: any,
+    settings: ProviderSettings,
     request: AIRequest
   ): Promise<AIResponse> {
     const baseUrl = settings.endpoint || provider.baseUrl;
@@ -581,23 +612,23 @@ export class EnhancedSecureAIService {
     }
 
     let url: string;
-    let body: any;
+    let body: RequestBody;
 
     if (provider.id === 'ollama') {
       url = `${baseUrl}/api/generate`;
       body = {
-        model: request.model,
+        model: request.model || 'default',
         prompt: request.prompt,
         stream: false,
         options: {
-          temperature: request.temperature,
-          num_predict: request.maxTokens
+          temperature: request.temperature || 0.7,
+          num_predict: request.maxTokens || 1500
         }
       };
     } else {
       url = `${baseUrl}/chat/completions`;
       body = {
-        model: request.model,
+        model: request.model || 'default',
         messages: [
           {
             role: 'system',
@@ -608,8 +639,8 @@ export class EnhancedSecureAIService {
             content: request.prompt
           }
         ],
-        temperature: request.temperature,
-        max_tokens: request.maxTokens
+        temperature: request.temperature || 0.7,
+        max_tokens: request.maxTokens || 1500
       };
     }
 
@@ -630,7 +661,7 @@ export class EnhancedSecureAIService {
 
       if (!response.ok) {
         const errorText = await response.text();
-        let errorData: any = {};
+        let errorData: ErrorData = {};
         
         try {
           errorData = JSON.parse(errorText);

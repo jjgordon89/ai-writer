@@ -7,7 +7,7 @@ interface EnhancedErrorBoundaryState {
   error: Error | null;
   errorInfo: React.ErrorInfo | null;
   errorId: string;
-  sanitizedError: any | null;
+  sanitizedError: ReturnType<typeof ErrorSanitizer.sanitizeForUser> | null;
   showDetails: boolean;
   retryCount: number;
 }
@@ -51,7 +51,7 @@ export class EnhancedErrorBoundary extends Component<EnhancedErrorBoundaryProps,
     };
   }
 
-  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+  override componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
     const { component, enableErrorReporting = true } = this.props;
     
     // Sanitize error for safe handling
@@ -95,7 +95,7 @@ export class EnhancedErrorBoundary extends Component<EnhancedErrorBoundaryProps,
     this.props.onError?.(error, errorInfo);
   }
 
-  componentDidUpdate(prevProps: EnhancedErrorBoundaryProps) {
+  override componentDidUpdate(prevProps: EnhancedErrorBoundaryProps) {
     const { resetOnPropsChange, resetKeys, maxRetries = 3 } = this.props;
     const { hasError, retryCount } = this.state;
 
@@ -110,7 +110,7 @@ export class EnhancedErrorBoundary extends Component<EnhancedErrorBoundaryProps,
     }
   }
 
-  componentWillUnmount() {
+  override componentWillUnmount() {
     if (this.resetTimeoutId) {
       clearTimeout(this.resetTimeoutId);
     }
@@ -184,7 +184,7 @@ export class EnhancedErrorBoundary extends Component<EnhancedErrorBoundaryProps,
     }
   };
 
-  render() {
+  override render() {
     if (this.state.hasError) {
       // Custom fallback
       if (this.props.fallback) {
@@ -358,7 +358,7 @@ export function withEnhancedErrorBoundary<P extends object>(
 export function useEnhancedErrorHandler(component?: string) {
   const asyncErrorHandler = React.useRef(AsyncErrorHandler.getInstance());
 
-  const reportError = React.useCallback((error: unknown, context?: any) => {
+  const reportError = React.useCallback((error: unknown, context?: Record<string, unknown>) => {
     const sanitizedError = ErrorSanitizer.sanitizeForUser(error, {
       component,
       ...context
@@ -375,7 +375,7 @@ export function useEnhancedErrorHandler(component?: string) {
 
   const wrapAsync = React.useCallback(<T,>(
     asyncFn: () => Promise<T>,
-    context?: any
+    context?: Record<string, unknown>
   ): Promise<T> => {
     return asyncErrorHandler.current.wrapAsync(asyncFn, {
       component,

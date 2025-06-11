@@ -1,7 +1,8 @@
-import React, { createContext, useContext, useReducer, useCallback, useEffect } from 'react';
+import React, { createContext, useContext, useReducer, useCallback, useEffect, useRef } from 'react';
 import { Project, Character, StoryArc } from '../types';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import { useAsyncErrorHandler } from '../hooks/useAsyncErrorHandler';
+import { debounce } from '../utils/debounce';
 
 interface ProjectState {
   currentProject: Project;
@@ -44,7 +45,7 @@ interface ProjectContextValue {
 const ProjectContext = createContext<ProjectContextValue | undefined>(undefined);
 
 const createDefaultProject = (): Project => ({
-  id: Date.now().toString(),
+  id: crypto.randomUUID(),
   title: 'Untitled Novel',
   description: '',
   genre: '',
@@ -80,7 +81,7 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
     case 'ADD_CHARACTER': {
       const newCharacter: Character = {
         ...action.payload,
-        id: Date.now().toString(),
+        id: crypto.randomUUID(),
         createdAt: new Date(),
         updatedAt: new Date(),
       };
@@ -145,7 +146,7 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
     case 'ADD_STORY_ARC': {
       const newArc: StoryArc = {
         ...action.payload,
-        id: Date.now().toString(),
+        id: crypto.randomUUID(),
         createdAt: new Date(),
         updatedAt: new Date(),
       };
@@ -216,7 +217,7 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
 
 export function ProjectProvider({ children }: { children: React.ReactNode }) {
   const [storedProject, setStoredProject] = useLocalStorage<Project>(
-    'currentProject', 
+    'currentProject',
     createDefaultProject()
   );
 
@@ -228,16 +229,30 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
     isDirty: false
   });
 
-  const { reportError, wrapAsync } = useAsyncErrorHandler({ 
-    component: 'ProjectProvider' 
+  const { wrapAsync } = useAsyncErrorHandler({
+    component: 'ProjectProvider'
   });
 
-  // Auto-save to localStorage when project changes
+  // Create debounced auto-save function
+  const debouncedSave = useRef(
+    debounce((project: Project) => {
+      setStoredProject(project);
+    }, 1000) // Save after 1 second of inactivity
+  );
+
+  // Auto-save to localStorage when project changes (debounced)
   useEffect(() => {
     if (state.isDirty) {
-      setStoredProject(state.currentProject);
+      debouncedSave.current(state.currentProject);
     }
-  }, [state.currentProject, state.isDirty, setStoredProject]);
+  }, [state.currentProject, state.isDirty]);
+
+  // Cleanup debounced function on unmount
+  useEffect(() => {
+    return () => {
+      debouncedSave.current.cancel();
+    };
+  }, []);
 
   const actions = {
     setProject: useCallback((project: Project) => {
@@ -286,9 +301,14 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
       }, { action: 'save-project' });
     }, [state.currentProject, setStoredProject, wrapAsync]),
 
-    createNewProject: useCallback(() => {
-      if (state.isDirty && !confirm('Create a new project? Unsaved changes will be lost.')) {
-        return;
+    createNewProject: useCallback((confirmCallback?: () => boolean) => {
+      // If there are unsaved changes, use the provided callback for confirmation
+      // The callback should return true to proceed or false to cancel
+      if (state.isDirty) {
+        const shouldProceed = confirmCallback ? confirmCallback() : true;
+        if (!shouldProceed) {
+          return;
+        }
       }
       
       const newProject = createDefaultProject();

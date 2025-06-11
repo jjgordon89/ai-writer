@@ -4,12 +4,9 @@ import { SidebarContainer } from './SidebarContainer';
 import { MainContent } from './MainContent';
 import { ModalManager } from './ModalManager';
 import { NotificationManager } from './NotificationManager';
-import { useUI } from '../../contexts';
 import { EnhancedErrorBoundary } from '../common/EnhancedErrorBoundary';
 
 export function AppLayout() {
-  const { state: uiState } = useUI();
-
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
       <EnhancedErrorBoundary level="component" component="HeaderContainer">

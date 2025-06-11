@@ -7,7 +7,7 @@ export interface ValidationRule {
   minLength?: number;
   maxLength?: number;
   pattern?: RegExp;
-  custom?: (value: any) => string | null;
+  custom?: (value: unknown) => string | null;
 }
 
 export interface ValidationResult {
@@ -91,7 +91,6 @@ export class InputSanitizer {
 
     if (allowBasicHtml) {
       // Allow only safe HTML tags
-      const allowedTags = ['p', 'br', 'strong', 'em', 'u', 'i', 'b'];
       let sanitized = this.sanitizeHtml(input);
       
       // Remove all tags except allowed ones
@@ -148,7 +147,7 @@ export class FormValidator {
   /**
    * Validate a single field
    */
-  static validateField(value: any, rules: ValidationRule): string | null {
+  static validateField(value: unknown, rules: ValidationRule): string | null {
     // Required check
     if (rules.required && (!value || (typeof value === 'string' && !value.trim()))) {
       return 'This field is required';
@@ -187,13 +186,16 @@ export class FormValidator {
   /**
    * Validate multiple fields
    */
-  static validateForm(data: Record<string, any>, rules: Record<string, ValidationRule>): ValidationResult {
+  static validateForm(data: Record<string, unknown>, rules: Record<string, ValidationRule>): ValidationResult {
     const errors: Record<string, string> = {};
 
     Object.keys(rules).forEach(field => {
-      const error = this.validateField(data[field], rules[field]);
-      if (error) {
-        errors[field] = error;
+      const rule = rules[field];
+      if (rule) {
+        const error = this.validateField(data[field], rule);
+        if (error) {
+          errors[field] = error;
+        }
       }
     });
 
@@ -209,8 +211,8 @@ export class FormValidator {
   static rules = {
     email: {
       pattern: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
-      custom: (value: string) => {
-        if (value && !this.rules.email.pattern!.test(value)) {
+      custom: (value: unknown) => {
+        if (value && typeof value === 'string' && !this.rules.email.pattern!.test(value)) {
           return 'Please enter a valid email address';
         }
         return null;
@@ -221,8 +223,8 @@ export class FormValidator {
       minLength: 10,
       maxLength: 200,
       pattern: /^[a-zA-Z0-9\-_]+$/,
-      custom: (value: string) => {
-        if (value && value.includes(' ')) {
+      custom: (value: unknown) => {
+        if (value && typeof value === 'string' && value.includes(' ')) {
           return 'API key cannot contain spaces';
         }
         return null;
@@ -230,8 +232,8 @@ export class FormValidator {
     },
 
     url: {
-      custom: (value: string) => {
-        if (value && !InputSanitizer.validateUrl(value)) {
+      custom: (value: unknown) => {
+        if (value && typeof value === 'string' && !InputSanitizer.validateUrl(value)) {
           return 'Please enter a valid URL (http or https)';
         }
         return null;
@@ -242,8 +244,8 @@ export class FormValidator {
       required: true,
       minLength: 1,
       maxLength: 100,
-      custom: (value: string) => {
-        if (value && /[<>:"/\\|?*]/.test(value)) {
+      custom: (value: unknown) => {
+        if (value && typeof value === 'string' && /[<>:"/\\|?*]/.test(value)) {
           return 'Title cannot contain special characters: < > : " / \\ | ? *';
         }
         return null;
@@ -254,9 +256,9 @@ export class FormValidator {
       required: true,
       minLength: 1,
       maxLength: 50,
-      pattern: /^[a-zA-Z\s\-'\.]+$/,
-      custom: (value: string) => {
-        if (value && !/^[a-zA-Z]/.test(value)) {
+      pattern: /^[a-zA-Z\s\-'.]+$/,
+      custom: (value: unknown) => {
+        if (value && typeof value === 'string' && !/^[a-zA-Z]/.test(value)) {
           return 'Name must start with a letter';
         }
         return null;
@@ -265,8 +267,8 @@ export class FormValidator {
 
     description: {
       maxLength: 1000,
-      custom: (value: string) => {
-        if (value && value.trim().length > 0 && value.trim().length < 10) {
+      custom: (value: unknown) => {
+        if (value && typeof value === 'string' && value.trim().length > 0 && value.trim().length < 10) {
           return 'Description must be at least 10 characters if provided';
         }
         return null;
@@ -289,7 +291,7 @@ export class CSPHelper {
       "style-src 'self' 'unsafe-inline'", // Allow inline styles for Tailwind
       "img-src 'self' data: blob: https:",
       "font-src 'self' data:",
-      "connect-src 'self' https://api.openai.com https://api.anthropic.com https://openrouter.ai https://api-inference.huggingface.co http://localhost:11434 http://localhost:1234",
+      "connect-src 'self' https://api.openai.com https://*.openai.com https://api.anthropic.com https://*.anthropic.com https://openrouter.ai https://*.openrouter.ai https://api-inference.huggingface.co https://*.huggingface.co http://localhost:11434 http://localhost:1234",
       "media-src 'self'",
       "object-src 'none'",
       "base-uri 'self'",
@@ -304,7 +306,7 @@ export class CSPHelper {
   /**
    * Set CSP headers (for server-side implementation)
    */
-  static setCSPHeaders(response: any): void {
+  static setCSPHeaders(response: { setHeader: (name: string, value: string) => void }): void {
     const csp = this.generateCSP();
     response.setHeader('Content-Security-Policy', csp);
     response.setHeader('X-Content-Type-Options', 'nosniff');

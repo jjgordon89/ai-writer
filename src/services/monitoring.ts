@@ -9,14 +9,14 @@ export interface PerformanceMetric {
   value: number;
   unit: 'ms' | 'bytes' | 'count' | 'percent';
   timestamp: Date;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown> | undefined;
 }
 
 export interface UserInteractionEvent {
   type: 'click' | 'scroll' | 'input' | 'navigation' | 'error';
   target: string;
   timestamp: Date;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown> | undefined;
 }
 
 export interface ComponentRenderMetric {
@@ -24,7 +24,7 @@ export interface ComponentRenderMetric {
   renderTime: number;
   updateCount: number;
   lastRender: Date;
-  props?: Record<string, any>;
+  props?: Record<string, unknown> | undefined;
 }
 
 export class MonitoringService {
@@ -57,7 +57,7 @@ export class MonitoringService {
   }
 
   // Performance Monitoring
-  recordMetric(name: string, value: number, unit: PerformanceMetric['unit'], metadata?: Record<string, any>): void {
+  recordMetric(name: string, value: number, unit: PerformanceMetric['unit'], metadata?: Record<string, unknown>): void {
     if (!this.isEnabled) return;
 
     const metric: PerformanceMetric = {
@@ -78,7 +78,7 @@ export class MonitoringService {
     });
   }
 
-  startTimer(name: string, metadata?: Record<string, any>): () => void {
+  startTimer(name: string, metadata?: Record<string, unknown>): () => void {
     if (!this.isEnabled) return () => {};
 
     const startTime = performance.now();
@@ -96,7 +96,7 @@ export class MonitoringService {
   }
 
   // Component Performance Monitoring
-  recordComponentRender(component: string, renderTime: number, props?: Record<string, any>): void {
+  recordComponentRender(component: string, renderTime: number, props?: Record<string, unknown>): void {
     if (!this.isEnabled) return;
 
     const existing = this.componentMetrics.get(component);
@@ -121,7 +121,7 @@ export class MonitoringService {
   }
 
   // User Interaction Tracking
-  recordInteraction(type: UserInteractionEvent['type'], target: string, metadata?: Record<string, any>): void {
+  recordInteraction(type: UserInteractionEvent['type'], target: string, metadata?: Record<string, unknown>): void {
     if (!this.isEnabled) return;
 
     const interaction: UserInteractionEvent = {
@@ -163,7 +163,7 @@ export class MonitoringService {
   }
 
   // Error Monitoring
-  recordError(error: Error, context?: string, metadata?: Record<string, any>): void {
+  recordError(error: Error, context?: string, metadata?: Record<string, unknown>): void {
     if (!this.isEnabled) return;
 
     logger.error(`Error in ${context || 'unknown context'}`, error, metadata);
@@ -246,7 +246,9 @@ export class MonitoringService {
     }, {} as Record<string, number[]>);
 
     Object.entries(metricGroups).forEach(([name, values]) => {
-      performanceAverages[name] = values.reduce((sum, v) => sum + v, 0) / values.length;
+      if (values && values.length > 0) {
+        performanceAverages[name] = values.reduce((sum, v) => sum + v, 0) / values.length;
+      }
     });
 
     return {
@@ -284,82 +286,135 @@ export class MonitoringService {
   private setupPerformanceObservers(): void {
     if (!this.isEnabled || typeof PerformanceObserver === 'undefined') return;
 
-    // Observe navigation timing
-    if ('navigation' in PerformanceObserver.supportedEntryTypes) {
-      const navigationObserver = new PerformanceObserver((list) => {
-        for (const entry of list.getEntries()) {
-          const nav = entry as PerformanceNavigationTiming;
-          this.recordMetric('page_load', nav.loadEventEnd - nav.navigationStart, 'ms');
-          this.recordMetric('dom_content_loaded', nav.domContentLoadedEventEnd - nav.navigationStart, 'ms');
-          this.recordMetric('first_paint', nav.loadEventEnd - nav.navigationStart, 'ms');
-        }
-      });
-      navigationObserver.observe({ entryTypes: ['navigation'] });
-      this.observers.set('navigation', navigationObserver);
-    }
-
-    // Observe paint timing
-    if ('paint' in PerformanceObserver.supportedEntryTypes) {
-      const paintObserver = new PerformanceObserver((list) => {
-        for (const entry of list.getEntries()) {
-          this.recordMetric(entry.name.replace('-', '_'), entry.startTime, 'ms');
-        }
-      });
-      paintObserver.observe({ entryTypes: ['paint'] });
-      this.observers.set('paint', paintObserver);
-    }
-
-    // Observe largest contentful paint
-    if ('largest-contentful-paint' in PerformanceObserver.supportedEntryTypes) {
-      const lcpObserver = new PerformanceObserver((list) => {
-        for (const entry of list.getEntries()) {
-          this.recordMetric('largest_contentful_paint', entry.startTime, 'ms');
-        }
-      });
-      lcpObserver.observe({ entryTypes: ['largest-contentful-paint'] });
-      this.observers.set('lcp', lcpObserver);
-    }
-
-    // Observe layout shifts
-    if ('layout-shift' in PerformanceObserver.supportedEntryTypes) {
-      const clsObserver = new PerformanceObserver((list) => {
-        for (const entry of list.getEntries()) {
-          const layoutShift = entry as any;
-          if (!layoutShift.hadRecentInput) {
-            this.recordMetric('cumulative_layout_shift', layoutShift.value, 'count');
+    try {
+      // Observe navigation timing
+      if ('navigation' in PerformanceObserver.supportedEntryTypes) {
+        const navigationObserver = new PerformanceObserver((list) => {
+          try {
+            for (const entry of list.getEntries()) {
+              const nav = entry as PerformanceNavigationTiming;
+              this.recordMetric('page_load', nav.loadEventEnd - nav.fetchStart, 'ms');
+              this.recordMetric('dom_content_loaded', nav.domContentLoadedEventEnd - nav.fetchStart, 'ms');
+              this.recordMetric('first_paint', nav.loadEventEnd - nav.fetchStart, 'ms');
+            }
+          } catch (error) {
+            logger.error('Error in navigation observer:', error instanceof Error ? error : new Error(String(error)));
           }
-        }
-      });
-      clsObserver.observe({ entryTypes: ['layout-shift'] });
-      this.observers.set('cls', clsObserver);
+        });
+        navigationObserver.observe({ entryTypes: ['navigation'] });
+        this.observers.set('navigation', navigationObserver);
+      }
+
+      // Observe paint timing
+      if ('paint' in PerformanceObserver.supportedEntryTypes) {
+        const paintObserver = new PerformanceObserver((list) => {
+          try {
+            for (const entry of list.getEntries()) {
+              this.recordMetric(entry.name.replace('-', '_'), entry.startTime, 'ms');
+            }
+          } catch (error) {
+            logger.error('Error in paint observer:', error instanceof Error ? error : new Error(String(error)));
+          }
+        });
+        paintObserver.observe({ entryTypes: ['paint'] });
+        this.observers.set('paint', paintObserver);
+      }
+
+      // Observe largest contentful paint
+      if ('largest-contentful-paint' in PerformanceObserver.supportedEntryTypes) {
+        const lcpObserver = new PerformanceObserver((list) => {
+          try {
+            for (const entry of list.getEntries()) {
+              this.recordMetric('largest_contentful_paint', entry.startTime, 'ms');
+            }
+          } catch (error) {
+            logger.error('Error in LCP observer:', error instanceof Error ? error : new Error(String(error)));
+          }
+        });
+        lcpObserver.observe({ entryTypes: ['largest-contentful-paint'] });
+        this.observers.set('lcp', lcpObserver);
+      }
+
+      // Observe layout shifts
+      if ('layout-shift' in PerformanceObserver.supportedEntryTypes) {
+        const clsObserver = new PerformanceObserver((list) => {
+          try {
+            for (const entry of list.getEntries()) {
+              const layoutShift = entry as unknown as { hadRecentInput: boolean; value: number };
+              if (!layoutShift.hadRecentInput) {
+                this.recordMetric('cumulative_layout_shift', layoutShift.value, 'count');
+              }
+            }
+          } catch (error) {
+            logger.error('Error in CLS observer:', error instanceof Error ? error : new Error(String(error)));
+          }
+        });
+        clsObserver.observe({ entryTypes: ['layout-shift'] });
+        this.observers.set('cls', clsObserver);
+      }
+    } catch (error) {
+      logger.error('Error setting up performance observers:', error instanceof Error ? error : new Error(String(error)));
     }
   }
 
   private setupErrorTracking(): void {
     if (!this.isEnabled) return;
 
-    // Track unhandled errors
-    window.addEventListener('error', (event) => {
-      this.recordError(new Error(event.message), 'window', {
-        filename: event.filename,
-        lineno: event.lineno,
-        colno: event.colno,
-      });
-    });
+    try {
+      // Track unhandled errors
+      window.addEventListener('error', this.handleError);
 
-    // Track unhandled promise rejections
-    window.addEventListener('unhandledrejection', (event) => {
-      this.recordError(
-        event.reason instanceof Error ? event.reason : new Error(String(event.reason)),
-        'unhandled_promise'
-      );
-    });
+      // Track unhandled promise rejections
+      window.addEventListener('unhandledrejection', this.handlePromiseRejection);
+    } catch (error) {
+      logger.error('Error setting up error tracking:', error instanceof Error ? error : new Error(String(error)));
+    }
   }
 
   private clearObservers(): void {
-    this.observers.forEach(observer => observer.disconnect());
-    this.observers.clear();
+    try {
+      this.observers.forEach((observer, key) => {
+        try {
+          observer.disconnect();
+        } catch (error) {
+          logger.error(`Error disconnecting observer ${key}:`, error instanceof Error ? error : new Error(String(error)));
+        }
+      });
+      this.observers.clear();
+    } catch (error) {
+      logger.error('Error clearing observers:', error instanceof Error ? error : new Error(String(error)));
+    }
   }
+
+  // Public method to safely cleanup and destroy monitoring instance
+  destroy(): void {
+    this.setEnabled(false);
+    this.clearObservers();
+    this.clearData();
+    
+    // Remove event listeners
+    try {
+      window.removeEventListener('error', this.handleError);
+      window.removeEventListener('unhandledrejection', this.handlePromiseRejection);
+    } catch (error) {
+      logger.error('Error removing event listeners:', error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
+  private handleError = (event: ErrorEvent) => {
+    this.recordError(new Error(event.message), 'window', {
+      filename: event.filename,
+      lineno: event.lineno,
+      colno: event.colno,
+    });
+  };
+
+  private handlePromiseRejection = (event: PromiseRejectionEvent) => {
+    this.recordError(
+      event.reason instanceof Error ? event.reason : new Error(String(event.reason)),
+      'unhandled_promise'
+    );
+  };
 
   private enforceMetricsLimit(): void {
     const maxMetrics = 10000;
@@ -377,7 +432,7 @@ export class MonitoringService {
 
   private getMemoryUsage(): number {
     if ('memory' in performance) {
-      return (performance as any).memory.usedJSHeapSize;
+      return (performance as unknown as { memory: { usedJSHeapSize: number } }).memory.usedJSHeapSize;
     }
     return 0;
   }
