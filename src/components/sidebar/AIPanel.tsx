@@ -1,6 +1,18 @@
 import React, { useState } from 'react';
-import { Bot, Send, Sparkles, Settings, Zap, AlertTriangle, Copy, CheckCircle, Clock } from 'lucide-react';
-import { AIService, AIRequest, createDefaultAISettings, AI_PROVIDERS } from '../../services/aiProviders';
+import { Bot, Send, Sparkles, Settings, Zap, AlertTriangle, Copy, CheckCircle, Clock, ListTree, UserCog, Palette } from 'lucide-react'; // Added ListTree, UserCog, Palette
+import {
+  AIService,
+  AIRequest,
+  createDefaultAISettings,
+  AI_PROVIDERS,
+  PlotGenerationRequest,
+  PlotGenerationResponse,
+  CharacterArcRequest,
+  CharacterArcResponse,
+  StyleToneAnalysisRequest,
+  StyleToneAnalysisResponse
+} from '../../services/aiProviders';
+import { LanceDBService, TextChunk } from '../../services/lanceDBService'; // Added LanceDBService
 
 interface AIPanelProps {
   aiService: AIService;
@@ -47,6 +59,35 @@ export function AIPanel({ aiService, onShowSettings }: AIPanelProps) {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatedContent, setGeneratedContent] = useState('');
   const [error, setError] = useState('');
+
+  // State for Plot Generation
+  const [plotGenerationPrompt, setPlotGenerationPrompt] = useState('');
+  const [generatedPlot, setGeneratedPlot] = useState<PlotGenerationResponse | null>(null);
+  const [isGeneratingPlot, setIsGeneratingPlot] = useState(false);
+  const [plotGenerationError, setPlotGenerationError] = useState('');
+
+  // State for Character Arc Development
+  const [characterArcPrompt, setCharacterArcPrompt] = useState('');
+  const [characterNameForArc, setCharacterNameForArc] = useState(''); // Simple text input for now
+  const [generatedCharacterArc, setGeneratedCharacterArc] = useState<CharacterArcResponse | null>(null);
+  const [isGeneratingCharacterArc, setIsGeneratingCharacterArc] = useState(false);
+  const [characterArcError, setCharacterArcError] = useState('');
+
+  // State for Style/Tone Analysis
+  const [textToAnalyze, setTextToAnalyze] = useState('');
+  const [referenceTexts, setReferenceTexts] = useState(''); // Will be split by newline
+  const [desiredStyle, setDesiredStyle] = useState('');
+  const [desiredTone, setDesiredTone] = useState('');
+  const [styleToneAnalysisResult, setStyleToneAnalysisResult] = useState<StyleToneAnalysisResponse | null>(null);
+  const [isAnalyzingStyleTone, setIsAnalyzingStyleTone] = useState(false);
+  const [styleToneAnalysisError, setStyleToneAnalysisError] = useState('');
+
+  // State for LanceDBService
+  const [lanceDBService, setLanceDBService] = useState<LanceDBService | null>(null);
+  const [lanceDBStatus, setLanceDBStatus] = useState<string>('Initializing...'); // For display
+  const [lanceDBError, setLanceDBError] = useState<string>('');
+
+
   const [generationHistory, setGenerationHistory] = useState<Array<{
     id: string;
     prompt: string;
@@ -62,6 +103,26 @@ export function AIPanel({ aiService, onShowSettings }: AIPanelProps) {
   const providerConfig = settings.providers[settings.defaultProvider];
   const isProviderConfigured = providerConfig?.isEnabled && 
     (!activeProvider?.requiresApiKey || providerConfig?.apiKey);
+
+  // Effect to initialize LanceDBService
+  React.useEffect(() => {
+    if (aiService && isProviderConfigured && !lanceDBService && !lanceDBError) {
+      console.log("Attempting to initialize LanceDBService...");
+      setLanceDBStatus('Initializing...');
+      const service = new LanceDBService(aiService);
+      service.initialize()
+        .then(() => {
+          setLanceDBService(service);
+          setLanceDBStatus('LanceDB Initialized');
+          console.log('LanceDBService initialized successfully.');
+        })
+        .catch(err => {
+          console.error('Failed to initialize LanceDBService:', err);
+          setLanceDBError(err.message || 'Unknown error initializing LanceDB.');
+          setLanceDBStatus('LanceDB Initialization Failed');
+        });
+    }
+  }, [aiService, isProviderConfigured, lanceDBService, lanceDBError]);
 
   const handleGenerate = async (prompt: string, type: string = 'custom') => {
     if (!prompt.trim()) return;
@@ -104,9 +165,188 @@ export function AIPanel({ aiService, onShowSettings }: AIPanelProps) {
     }
   };
 
+  const handleAnalyzeStyleTone = async () => {
+    if (!textToAnalyze.trim()) return;
+
+    setIsAnalyzingStyleTone(true);
+    setStyleToneAnalysisError('');
+    // Keep previous results on screen while new ones are loading, or clear them:
+    // setStyleToneAnalysisResult(null);
+
+    let similarDocs: TextChunk[] = [];
+    let lanceError = '';
+
+    if (!lanceDBService && referenceTexts.trim()) {
+      setStyleToneAnalysisError('LanceDB is not initialized. Cannot process reference texts or perform similarity search.');
+      setIsAnalyzingStyleTone(false);
+      return;
+    }
+
+    if (lanceDBService && referenceTexts.trim()) {
+      try {
+        const refTextsArray = referenceTexts.split('\n').map(t => t.trim()).filter(t => t);
+        // For simplicity, adding all reference texts on each analysis.
+        // A more robust implementation would check for existing texts or manage a collection.
+        for (const refText of refTextsArray) {
+          // Use a consistent ID for reference texts to allow potential updates or avoid duplicates if addText handles it.
+          // For now, using text itself as part of ID, or a hash, could be one strategy.
+          // Let's use a simple source identifier.
+          await lanceDBService.addText(refText, `reference_document_${Date.now()}`);
+        }
+        console.log("Reference texts processed by LanceDB.");
+      } catch (dbError) {
+        console.error('Error adding reference texts to LanceDB:', dbError);
+        lanceError += `Error adding reference texts: ${dbError instanceof Error ? dbError.message : String(dbError)}\n`;
+      }
+    }
+
+    if (lanceDBService) {
+      try {
+        similarDocs = await lanceDBService.searchSimilarTexts(textToAnalyze.trim(), 3);
+        console.log("Similar texts search completed by LanceDB.", similarDocs);
+      } catch (dbError) {
+        console.error('Error searching similar texts in LanceDB:', dbError);
+        lanceError += `Error searching similar texts: ${dbError instanceof Error ? dbError.message : String(dbError)}\n`;
+      }
+    }
+
+    try {
+      const request: StyleToneAnalysisRequest = {
+        prompt: `Analyze the style and tone of the following text: "${textToAnalyze.substring(0, 100)}..."`, // Shortened prompt for history
+        textToAnalyze: textToAnalyze.trim(),
+        referenceTexts: referenceTexts.trim() ? referenceTexts.split('\n').map(t => t.trim()).filter(t => t) : undefined,
+        desiredStyle: desiredStyle.trim() || undefined,
+        desiredTone: desiredTone.trim() || undefined,
+        type: 'style-tone-analysis', // Ensure type is set
+        model: providerConfig?.selectedModel,
+        temperature: settings.temperature,
+        maxTokens: settings.maxTokens,
+      };
+
+      const response = await aiService.analyzeStyleTone(request);
+
+      // Combine AI response with LanceDB results for display
+      const combinedResult: StyleToneAnalysisResponse & { similarSnippets?: TextChunk[] } = {
+        ...response,
+        ...(similarDocs.length > 0 && { similarSnippets: similarDocs }),
+      };
+      setStyleToneAnalysisResult(combinedResult);
+
+      if (lanceError) {
+        setStyleToneAnalysisError(prev => prev ? `${prev}\n${lanceError}` : lanceError);
+      }
+
+      const historyEntry = {
+        id: `styletone-${Date.now().toString()}`,
+        prompt: `Style/Tone Analysis for: "${textToAnalyze.substring(0, 50)}..." (Ref texts: ${referenceTexts.trim() ? 'Yes' : 'No'})`,
+        content: `Feedback: ${response.feedbackOnStyle || ''} ${response.feedbackOnTone || ''}`.trim() + (similarDocs.length > 0 ? ` Found ${similarDocs.length} similar snippets.` : '') || 'Analysis complete.',
+        provider: response.provider,
+        model: response.model,
+        timestamp: new Date(),
+        usage: response.usage,
+      };
+      setGenerationHistory(prev => [historyEntry, ...prev.slice(0, 9)]);
+
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'An unexpected error occurred during style/tone analysis';
+      setStyleToneAnalysisError(errorMessage);
+      console.error('AI style/tone analysis failed:', err);
+    } finally {
+      setIsAnalyzingStyleTone(false);
+    }
+  };
+
+  const handleDevelopCharacterArc = async () => {
+    if (!characterArcPrompt.trim()) return;
+
+    setIsGeneratingCharacterArc(true);
+    setCharacterArcError('');
+    setGeneratedCharacterArc(null);
+
+    try {
+      const request: CharacterArcRequest = {
+        prompt: `Develop a character arc for ${characterNameForArc || 'the character'}. Details: ${characterArcPrompt.trim()}`,
+        characterId: characterNameForArc.trim() || undefined, // Optional: use if you have a system for IDs
+        // characterData: {} // Optional: Pass actual character data if available from a store or state
+        desiredArcType: '', // Optional: Add UI for this if needed
+        keyMotivations: [], // Optional: Add UI for this if needed
+        type: 'character-arc-development', // Ensure type is set
+        model: providerConfig?.selectedModel,
+        temperature: settings.temperature,
+        maxTokens: settings.maxTokens,
+      };
+
+      const response = await aiService.developCharacterArc(request);
+      setGeneratedCharacterArc(response);
+
+      const historyEntry = {
+        id: `chararc-${Date.now().toString()}`,
+        prompt: `Character Arc for ${characterNameForArc || 'Character'}: ${characterArcPrompt.trim()}`,
+        content: response.suggestedArc ? response.suggestedArc.arcSummary : 'No arc generated',
+        provider: response.provider,
+        model: response.model,
+        timestamp: new Date(),
+        usage: response.usage,
+      };
+      setGenerationHistory(prev => [historyEntry, ...prev.slice(0, 9)]);
+
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'An unexpected error occurred during character arc development';
+      setCharacterArcError(errorMessage);
+      console.error('AI character arc development failed:', err);
+    } finally {
+      setIsGeneratingCharacterArc(false);
+    }
+  };
+
   const handleCustomPrompt = () => {
     if (customPrompt.trim()) {
       handleGenerate(customPrompt, 'custom');
+    }
+  };
+
+  const handleGeneratePlot = async () => {
+    if (!plotGenerationPrompt.trim()) return;
+
+    setIsGeneratingPlot(true);
+    setPlotGenerationError('');
+    setGeneratedPlot(null);
+
+    try {
+      const request: PlotGenerationRequest = {
+        prompt: plotGenerationPrompt.trim(), // Using plotGenerationPrompt as the main prompt for the request
+        existingPlotSummary: plotGenerationPrompt.trim(), // Or map other specific fields
+        // desiredGenres: [], // Example: Add UI elements for these if needed
+        // keyThemes: [],   // Example: Add UI elements for these if needed
+        type: 'plot-generation', // Ensure type is set
+        model: providerConfig?.selectedModel,
+        temperature: settings.temperature,
+        maxTokens: settings.maxTokens,
+      };
+
+      const response = await aiService.generatePlot(request);
+      setGeneratedPlot(response);
+
+      // Optionally, add to a specific plot generation history or the main history
+      const historyEntry = {
+        id: `plot-${Date.now().toString()}`,
+        prompt: `Plot: ${plotGenerationPrompt.trim()}`,
+        content: response.suggestedPlots && response.suggestedPlots.length > 0
+          ? response.suggestedPlots.map(p => p.summary).join('\n---\n')
+          : 'No plot generated',
+        provider: response.provider,
+        model: response.model,
+        timestamp: new Date(),
+        usage: response.usage,
+      };
+      setGenerationHistory(prev => [historyEntry, ...prev.slice(0, 9)]);
+
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'An unexpected error occurred during plot generation';
+      setPlotGenerationError(errorMessage);
+      console.error('AI plot generation failed:', err);
+    } finally {
+      setIsGeneratingPlot(false);
     }
   };
 
@@ -200,6 +440,12 @@ export function AIPanel({ aiService, onShowSettings }: AIPanelProps) {
         </div>
       </div>
 
+      {/* LanceDB Status Display */}
+      <div className={`p-2 rounded-lg text-xs border ${lanceDBError ? 'bg-red-50 border-red-200 text-red-700' : (lanceDBService ? 'bg-green-50 border-green-200 text-green-700' : 'bg-yellow-50 border-yellow-300 text-yellow-700')}`}>
+        LanceDB Status: {lanceDBStatus} {lanceDBError && `: ${lanceDBError}`}
+      </div>
+
+
       {/* Error Display */}
       {error && (
         <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
@@ -245,6 +491,324 @@ export function AIPanel({ aiService, onShowSettings }: AIPanelProps) {
             )}
           </button>
         </div>
+      </div>
+
+      {/* Plot Generation Section */}
+      <div>
+        <h4 className="text-md font-semibold text-gray-900 mb-3 flex items-center space-x-2">
+          <ListTree className="w-4 h-4 text-blue-600" />
+          <span>Plot Generation</span>
+        </h4>
+        <div className="space-y-3">
+          <textarea
+            value={plotGenerationPrompt}
+            onChange={(e) => setPlotGenerationPrompt(e.target.value)}
+            rows={4}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-sm"
+            placeholder="Enter your existing plot summary, key ideas, or themes..."
+            disabled={isGeneratingPlot || isGenerating}
+          />
+          <button
+            onClick={handleGeneratePlot}
+            disabled={isGeneratingPlot || isGenerating || !plotGenerationPrompt.trim()}
+            className="w-full flex items-center justify-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {isGeneratingPlot ? (
+              <>
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                <span>Generating Plot...</span>
+              </>
+            ) : (
+              <>
+                <ListTree className="w-4 h-4" />
+                <span>Generate Plot</span>
+              </>
+            )}
+          </button>
+        </div>
+        {plotGenerationError && (
+          <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+            <div className="flex items-start space-x-2">
+              <AlertTriangle className="w-4 h-4 text-red-600 mt-0.5 flex-shrink-0" />
+              <div>
+                <h4 className="text-sm font-medium text-red-800">Plot Generation Failed</h4>
+                <p className="text-sm text-red-700 mt-1">{plotGenerationError}</p>
+              </div>
+            </div>
+          </div>
+        )}
+        {generatedPlot && generatedPlot.suggestedPlots && (
+          <div className="mt-4">
+            <div className="flex items-center justify-between mb-2">
+              <h5 className="text-sm font-semibold text-gray-900">Suggested Plots</h5>
+              <button
+                onClick={() => copyToClipboard(generatedPlot.suggestedPlots?.map(p => p.summary).join('\n\n') || '')}
+                className="px-2 py-1 text-xs text-indigo-600 hover:bg-indigo-50 rounded flex items-center space-x-1"
+              >
+                <Copy className="w-3 h-3" />
+                <span>Copy All</span>
+              </button>
+            </div>
+            <div className="p-3 bg-gray-50 rounded-lg border border-gray-200 max-h-64 overflow-y-auto space-y-3">
+              {generatedPlot.suggestedPlots.map((plot, index) => (
+                <div key={index} className="border-b border-gray-200 pb-2 mb-2 last:border-b-0 last:pb-0 last:mb-0">
+                  <h6 className="text-xs font-semibold text-gray-800 mb-1">Plot Option {index + 1}</h6>
+                  <pre className="text-sm text-gray-700 whitespace-pre-wrap font-sans">
+                    {plot.summary}
+                  </pre>
+                  {plot.potentialStoryArcs && plot.potentialStoryArcs.length > 0 && (
+                    <div className="mt-1">
+                      <p className="text-xs font-medium text-gray-600">Story Arcs:</p>
+                      <ul className="list-disc list-inside pl-2 text-xs text-gray-600">
+                        {plot.potentialStoryArcs.map((arc, arcIdx) => <li key={arcIdx}>{arc}</li>)}
+                      </ul>
+                    </div>
+                  )}
+                  {plot.keyTurningPoints && plot.keyTurningPoints.length > 0 && (
+                    <div className="mt-1">
+                      <p className="text-xs font-medium text-gray-600">Turning Points:</p>
+                      <ul className="list-disc list-inside pl-2 text-xs text-gray-600">
+                        {plot.keyTurningPoints.map((tp, tpIdx) => <li key={tpIdx}>{tp}</li>)}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Style/Tone Consistency Analysis Section */}
+      <div>
+        <h4 className="text-md font-semibold text-gray-900 mb-3 flex items-center space-x-2">
+          <Palette className="w-4 h-4 text-orange-600" />
+          <span>Style/Tone Analysis</span>
+        </h4>
+        <div className="space-y-3">
+          <textarea
+            value={textToAnalyze}
+            onChange={(e) => setTextToAnalyze(e.target.value)}
+            rows={5}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-sm"
+            placeholder="Text to Analyze..."
+            disabled={isAnalyzingStyleTone || isGenerating}
+          />
+          <textarea
+            value={referenceTexts}
+            onChange={(e) => setReferenceTexts(e.target.value)}
+            rows={3}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-sm"
+            placeholder="Reference Texts (Optional, one per line)..."
+            disabled={isAnalyzingStyleTone || isGenerating}
+          />
+          <input
+            type="text"
+            value={desiredStyle}
+            onChange={(e) => setDesiredStyle(e.target.value)}
+            placeholder="Desired Style (Optional)"
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-sm"
+            disabled={isAnalyzingStyleTone || isGenerating}
+          />
+          <input
+            type="text"
+            value={desiredTone}
+            onChange={(e) => setDesiredTone(e.target.value)}
+            placeholder="Desired Tone (Optional)"
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-sm"
+            disabled={isAnalyzingStyleTone || isGenerating || !lanceDBService}
+          />
+          <button
+            onClick={handleAnalyzeStyleTone}
+            disabled={isAnalyzingStyleTone || isGenerating || !textToAnalyze.trim() || !lanceDBService}
+            className="w-full flex items-center justify-center space-x-2 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {isAnalyzingStyleTone ? (
+              <>
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                <span>Analyzing...</span>
+              </>
+            ) : (
+              <>
+                <Palette className="w-4 h-4" />
+                <span>Analyze Style/Tone</span>
+              </>
+            )}
+          </button>
+        </div>
+        {styleToneAnalysisError && (
+          <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+            <div className="flex items-start space-x-2">
+              <AlertTriangle className="w-4 h-4 text-red-600 mt-0.5 flex-shrink-0" />
+              <div>
+                <h4 className="text-sm font-medium text-red-800">Analysis Failed</h4>
+                <p className="text-sm text-red-700 mt-1">{styleToneAnalysisError}</p>
+              </div>
+            </div>
+          </div>
+        )}
+        {styleToneAnalysisResult && (
+          <div className="mt-4">
+            <div className="flex items-center justify-between mb-2">
+              <h5 className="text-sm font-semibold text-gray-900">Analysis Result</h5>
+              <button
+                 onClick={() => copyToClipboard(JSON.stringify(styleToneAnalysisResult, null, 2))}
+                className="px-2 py-1 text-xs text-indigo-600 hover:bg-indigo-50 rounded flex items-center space-x-1"
+              >
+                <Copy className="w-3 h-3" />
+                <span>Copy Result</span>
+              </button>
+            </div>
+            <div className="p-3 bg-gray-50 rounded-lg border border-gray-200 max-h-96 overflow-y-auto space-y-3">
+              {typeof styleToneAnalysisResult.consistencyScore === 'number' && (
+                <div>
+                  <h6 className="text-xs font-semibold text-gray-800">Consistency Score:</h6>
+                  <p className="text-sm text-gray-700">{styleToneAnalysisResult.consistencyScore.toFixed(2)}</p>
+                </div>
+              )}
+              {styleToneAnalysisResult.feedbackOnStyle && (
+                <div>
+                  <h6 className="text-xs font-semibold text-gray-800">Feedback on Style:</h6>
+                  <pre className="text-sm text-gray-700 whitespace-pre-wrap font-sans">{styleToneAnalysisResult.feedbackOnStyle}</pre>
+                </div>
+              )}
+              {styleToneAnalysisResult.feedbackOnTone && (
+                <div>
+                  <h6 className="text-xs font-semibold text-gray-800">Feedback on Tone:</h6>
+                  <pre className="text-sm text-gray-700 whitespace-pre-wrap font-sans">{styleToneAnalysisResult.feedbackOnTone}</pre>
+                </div>
+              )}
+              {styleToneAnalysisResult.suggestionsForImprovement && styleToneAnalysisResult.suggestionsForImprovement.length > 0 && (
+                <div>
+                  <h6 className="text-xs font-semibold text-gray-800">Suggestions for Improvement:</h6>
+                  <ul className="list-disc list-inside pl-2 text-sm text-gray-700 space-y-1">
+                    {styleToneAnalysisResult.suggestionsForImprovement.map((suggestion, index) => (
+                      <li key={index}>{suggestion}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {/* Display Similar Snippets */}
+              {(styleToneAnalysisResult as any).similarSnippets && (styleToneAnalysisResult as any).similarSnippets.length > 0 && (
+                <div>
+                  <h6 className="text-xs font-semibold text-gray-800 mt-3">Similar Stored Snippets (from LanceDB):</h6>
+                  <ul className="space-y-2">
+                    {(styleToneAnalysisResult as any).similarSnippets.map((snippet: TextChunk, index: number) => (
+                      <li key={snippet.id || index} className="p-2 border border-gray-300 rounded bg-gray-100">
+                        <p className="text-xs text-gray-600 truncate" title={snippet.text}>"{snippet.text}"</p>
+                        <p className="text-xs text-gray-500">Source: {snippet.source} (Score: {snippet._score?.toFixed(3)})</p>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Character Arc Development Section */}
+      <div>
+        <h4 className="text-md font-semibold text-gray-900 mb-3 flex items-center space-x-2">
+          <UserCog className="w-4 h-4 text-teal-600" />
+          <span>Character Arc Development</span>
+        </h4>
+        <div className="space-y-3">
+          <input
+            type="text"
+            value={characterNameForArc}
+            onChange={(e) => setCharacterNameForArc(e.target.value)}
+            placeholder="Character Name (Optional)"
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-sm"
+            disabled={isGeneratingCharacterArc || isGenerating}
+          />
+          <textarea
+            value={characterArcPrompt}
+            onChange={(e) => setCharacterArcPrompt(e.target.value)}
+            rows={4}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-sm"
+            placeholder="Describe the character, desired arc type (e.g., redemption, fall), key motivations, or specific situations..."
+            disabled={isGeneratingCharacterArc || isGenerating}
+          />
+          <button
+            onClick={handleDevelopCharacterArc}
+            disabled={isGeneratingCharacterArc || isGenerating || !characterArcPrompt.trim()}
+            className="w-full flex items-center justify-center space-x-2 px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {isGeneratingCharacterArc ? (
+              <>
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                <span>Developing Arc...</span>
+              </>
+            ) : (
+              <>
+                <UserCog className="w-4 h-4" />
+                <span>Develop Character Arc</span>
+              </>
+            )}
+          </button>
+        </div>
+        {characterArcError && (
+          <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+            <div className="flex items-start space-x-2">
+              <AlertTriangle className="w-4 h-4 text-red-600 mt-0.5 flex-shrink-0" />
+              <div>
+                <h4 className="text-sm font-medium text-red-800">Character Arc Failed</h4>
+                <p className="text-sm text-red-700 mt-1">{characterArcError}</p>
+              </div>
+            </div>
+          </div>
+        )}
+        {generatedCharacterArc && generatedCharacterArc.suggestedArc && (
+          <div className="mt-4">
+            <div className="flex items-center justify-between mb-2">
+              <h5 className="text-sm font-semibold text-gray-900">Suggested Character Arc</h5>
+              <button
+                onClick={() => copyToClipboard(JSON.stringify(generatedCharacterArc.suggestedArc, null, 2))}
+                className="px-2 py-1 text-xs text-indigo-600 hover:bg-indigo-50 rounded flex items-center space-x-1"
+              >
+                <Copy className="w-3 h-3" />
+                <span>Copy Arc</span>
+              </button>
+            </div>
+            <div className="p-3 bg-gray-50 rounded-lg border border-gray-200 max-h-80 overflow-y-auto space-y-2">
+              <div>
+                <h6 className="text-xs font-semibold text-gray-800">Summary:</h6>
+                <pre className="text-sm text-gray-700 whitespace-pre-wrap font-sans">
+                  {generatedCharacterArc.suggestedArc.arcSummary}
+                </pre>
+              </div>
+              {generatedCharacterArc.suggestedArc.keyDevelopmentStages && generatedCharacterArc.suggestedArc.keyDevelopmentStages.length > 0 && (
+                <div>
+                  <h6 className="text-xs font-semibold text-gray-800 mt-2">Key Development Stages:</h6>
+                  <ul className="list-disc list-inside pl-2 text-sm text-gray-700 space-y-1">
+                    {generatedCharacterArc.suggestedArc.keyDevelopmentStages.map((stage, index) => (
+                      <li key={index}>{stage}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {generatedCharacterArc.suggestedArc.potentialConflicts && generatedCharacterArc.suggestedArc.potentialConflicts.length > 0 && (
+                <div>
+                  <h6 className="text-xs font-semibold text-gray-800 mt-2">Potential Conflicts:</h6>
+                  <ul className="list-disc list-inside pl-2 text-sm text-gray-700 space-y-1">
+                    {generatedCharacterArc.suggestedArc.potentialConflicts.map((conflict, index) => (
+                      <li key={index}>{conflict}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {generatedCharacterArc.suggestedArc.endingResolution && (
+                <div>
+                  <h6 className="text-xs font-semibold text-gray-800 mt-2">Ending Resolution:</h6>
+                  <pre className="text-sm text-gray-700 whitespace-pre-wrap font-sans">
+                    {generatedCharacterArc.suggestedArc.endingResolution}
+                  </pre>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Quick Prompts */}

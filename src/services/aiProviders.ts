@@ -5,6 +5,7 @@ export interface AIProvider {
   baseUrl: string;
   requiresApiKey: boolean;
   models: string[];
+  embeddingModels?: string[]; // Added for embedding models
   description: string;
 }
 
@@ -13,6 +14,7 @@ export interface AISettings {
     apiKey?: string;
     endpoint?: string;
     selectedModel?: string;
+    selectedEmbeddingModel?: string; // Added for selected embedding model
     isEnabled: boolean;
   }>;
   defaultProvider: string;
@@ -39,6 +41,72 @@ export interface AIResponse {
   };
 }
 
+import { Character } from '../types';
+
+// Plot Generation Interfaces
+export interface PlotGenerationRequest extends AIRequest {
+  projectId?: string;
+  existingPlotSummary?: string;
+  desiredGenres?: string[];
+  keyThemes?: string[];
+  numberOfAlternativePlots?: number;
+}
+
+export interface PlotGenerationResponse extends AIResponse {
+  suggestedPlots?: {
+    summary: string;
+    potentialStoryArcs?: string[];
+    keyTurningPoints?: string[];
+  }[];
+}
+
+// Character Arc Development Interfaces
+export interface CharacterArcRequest extends AIRequest {
+  characterId?: string;
+  characterData?: Character;
+  desiredArcType?: string; // e.g., redemption, tragic fall
+  keyMotivations?: string[];
+}
+
+export interface CharacterArcResponse extends AIResponse {
+  suggestedArc?: {
+    arcSummary: string;
+    keyDevelopmentStages?: string[];
+    potentialConflicts?: string[];
+    endingResolution?: string;
+  };
+}
+
+// Style/Tone Consistency Analysis Interfaces
+export interface StyleToneAnalysisRequest extends AIRequest {
+  textToAnalyze: string;
+  referenceTexts?: string[];
+  desiredStyle?: string;
+  desiredTone?: string;
+}
+
+export interface StyleToneAnalysisResponse extends AIResponse {
+  consistencyScore?: number; // if reference texts are provided
+  feedbackOnStyle?: string;
+  feedbackOnTone?: string;
+  suggestionsForImprovement?: string[];
+}
+
+// Embedding Interfaces
+export interface EmbeddingRequest {
+  texts: string[];
+  model?: string;
+}
+
+export interface EmbeddingResponse {
+  embeddings: number[][];
+  model: string;
+  usage?: { // Optional usage information
+    promptTokens?: number;
+    totalTokens?: number;
+  };
+}
+
 export const AI_PROVIDERS: AIProvider[] = [
   {
     id: 'openai',
@@ -47,6 +115,7 @@ export const AI_PROVIDERS: AIProvider[] = [
     baseUrl: 'https://api.openai.com/v1',
     requiresApiKey: true,
     models: ['gpt-4o', 'gpt-4o-mini', 'gpt-4', 'gpt-3.5-turbo'],
+    embeddingModels: ['text-embedding-3-small', 'text-embedding-3-large', 'text-embedding-ada-002'],
     description: 'Industry-leading models from OpenAI including GPT-4 and GPT-3.5'
   },
   {
@@ -415,14 +484,134 @@ export class AIService {
   getSettings(): AISettings {
     return { ...this.settings };
   }
+
+  // Embedding method
+  async getEmbeddings(texts: string[], embeddingModel?: string): Promise<number[][]> {
+    const provider = AI_PROVIDERS.find(p => p.id === this.settings.defaultProvider);
+    if (!provider) {
+      throw new Error('No provider configured for embeddings.');
+    }
+
+    const providerSettings = this.settings.providers[provider.id];
+    if (!providerSettings?.isEnabled) {
+      throw new Error(`Provider ${provider.name} is not enabled for embeddings.`);
+    }
+
+    if (provider.requiresApiKey && !providerSettings.apiKey) {
+      throw new Error(`API key required for ${provider.name} embeddings.`);
+    }
+
+    const modelToUse = embeddingModel || providerSettings.selectedEmbeddingModel || provider.embeddingModels?.[0];
+    if (!modelToUse) {
+      throw new Error(`No embedding model configured for ${provider.name}.`);
+    }
+
+    // For now, only OpenAI is implemented
+    if (provider.id === 'openai' || provider.id === 'openrouter') { // Assuming openrouter can use openai embedding endpoint structure
+      return this.callOpenAIEmbeddings(provider, providerSettings, texts, modelToUse);
+    } else {
+      // TODO: Implement for other providers or make callEmbeddingProvider more generic
+      console.warn(`Embedding generation for ${provider.name} is not yet implemented.`);
+      // Return empty array or throw specific error
+      // For now, let's throw an error as per the instructions to focus on OpenAI
+      throw new Error(`Embedding generation for ${provider.name} is not yet implemented.`);
+    }
+  }
+
+  private async callOpenAIEmbeddings(
+    provider: AIProvider,
+    settings: any,
+    texts: string[],
+    embeddingModel: string
+  ): Promise<number[][]> {
+    // OpenRouter uses the same base URL for embeddings but needs it specified if different from chat
+    // For OpenAI, it's usually provider.baseUrl + /embeddings
+    // For OpenRouter, it's often settings.endpoint (which is their base) + /embeddings
+    let url = `${settings.endpoint || provider.baseUrl}/embeddings`;
+    if (provider.id === 'openrouter' && settings.endpoint) {
+        // OpenRouter's endpoint is the full base URL, so we just add /embeddings if not already there
+        if (!settings.endpoint.endsWith('/embeddings')) {
+            url = `${settings.endpoint}/embeddings`;
+        } else {
+            url = settings.endpoint; // Already includes /embeddings
+        }
+    }
+
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${settings.apiKey}`,
+        ...(provider.id === 'openrouter' && { // Specific headers for OpenRouter if any
+          'HTTP-Referer': window.location.origin, // Example header
+          'X-Title': 'AI Fiction Writer' // Example header
+        })
+      },
+      body: JSON.stringify({
+        input: texts,
+        model: embeddingModel,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      // Attempt to get a more specific error message from OpenAI/OpenRouter
+      const message = errorData.error?.message || errorData.message || `HTTP ${response.status}: ${response.statusText}`;
+      console.error(`OpenAI/OpenRouter Embedding API Error: ${response.status}`, errorData);
+      throw new Error(message);
+    }
+
+    const data = await response.json();
+
+    // The OpenAI response structure is data: [{ embedding: [...] }, { embedding: [...] }]
+    // It can also be just { data: [{...}], usage: {...} }
+    if (!data.data || !Array.isArray(data.data)) {
+        console.error('Unexpected response structure from embedding API:', data);
+        throw new Error('Failed to parse embeddings from API response: data field is missing or not an array.');
+    }
+
+    return data.data.map((item: any) => {
+      if (!item.embedding || !Array.isArray(item.embedding)) {
+        console.error('Invalid embedding item found:', item);
+        throw new Error('Invalid embedding format in API response item.');
+      }
+      return item.embedding;
+    });
+  }
+
+
+  async generatePlot(request: PlotGenerationRequest): Promise<PlotGenerationResponse> {
+    const response = await this.generateContent({
+      ...request,
+      type: 'plot-generation', // Set the type for the generic handler
+    });
+    return response as PlotGenerationResponse;
+  }
+
+  async developCharacterArc(request: CharacterArcRequest): Promise<CharacterArcResponse> {
+    const response = await this.generateContent({
+      ...request,
+      type: 'character-arc-development', // Set the type for the generic handler
+    });
+    return response as CharacterArcResponse;
+  }
+
+  async analyzeStyleTone(request: StyleToneAnalysisRequest): Promise<StyleToneAnalysisResponse> {
+    const response = await this.generateContent({
+      ...request,
+      type: 'style-tone-analysis', // Set the type for the generic handler
+    });
+    return response as StyleToneAnalysisResponse;
+  }
 }
 
 export function createDefaultAISettings(): AISettings {
   return {
     providers: {
-      openai: { isEnabled: false },
+      openai: { isEnabled: false, selectedEmbeddingModel: 'text-embedding-3-small' },
       anthropic: { isEnabled: false },
-      openrouter: { isEnabled: false },
+      openrouter: { isEnabled: false, selectedEmbeddingModel: 'openai/text-embedding-ada-002' }, // Example for OpenRouter
       huggingface: { isEnabled: false },
       ollama: { isEnabled: false },
       lmstudio: { isEnabled: false }
