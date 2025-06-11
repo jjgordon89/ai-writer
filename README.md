@@ -2,10 +2,6 @@
 
 AI Fiction Writer is a powerful and intuitive web application designed to assist authors and hobbyists in crafting compelling stories. It combines a rich-text editing experience with advanced AI-powered tools to streamline the creative writing process, from brainstorming initial ideas to managing complex narratives.
 
-# ai-writer
-
-[Edit in StackBlitz next generation editor ⚡️](https://stackblitz.com/~/github.com/jjgordon89/ai-writer)
-
 ## Key Features
 
 *   **Rich Text Editor:** A WYSIWYG editor for a seamless writing experience.
