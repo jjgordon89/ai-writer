@@ -13,6 +13,7 @@ export interface AIProvider {
   baseUrl: string;
   requiresApiKey: boolean;
   models: string[];
+  embeddingModels?: string[]; // Added
   description: string;
 }
 
@@ -20,6 +21,7 @@ export interface SecureAISettings {
   providers: Record<string, {
     endpoint?: string;
     selectedModel?: string;
+    selectedEmbeddingModel?: string; // Added
     isEnabled: boolean;
   }>;
   defaultProvider: string;
@@ -46,6 +48,86 @@ export interface AIResponse {
   };
 }
 
+// --- New Interfaces ---
+// Plot Generation
+export interface PlotGenerationRequest extends AIRequest {
+  projectId?: string;
+  existingPlotSummary?: string;
+  desiredGenres?: string[];
+  keyThemes?: string[];
+  numberOfAlternativePlots?: number;
+}
+
+export interface PlotGenerationResponse extends AIResponse {
+  suggestedPlots?: {
+    summary: string;
+    potentialStoryArcs?: string[];
+    keyTurningPoints?: string[];
+  }[];
+}
+
+// Character Arc Development
+export interface CharacterArcRequest extends AIRequest {
+  characterId?: string;
+  // Assuming Character type would be imported or defined elsewhere if complex
+  characterData?: any; // Replace 'any' with actual Character type if available
+  desiredArcType?: string;
+  keyMotivations?: string[];
+}
+
+export interface CharacterArcResponse extends AIResponse {
+  suggestedArc?: {
+    arcSummary: string;
+    keyDevelopmentStages?: string[];
+    potentialConflicts?: string[];
+    endingResolution?: string;
+  };
+}
+
+// Style/Tone Consistency Analysis
+export interface StyleToneAnalysisRequest extends AIRequest {
+  textToAnalyze: string;
+  referenceTexts?: string[];
+  desiredStyle?: string;
+  desiredTone?: string;
+}
+
+export interface StyleToneAnalysisResponse extends AIResponse {
+  consistencyScore?: number;
+  feedbackOnStyle?: string;
+  feedbackOnTone?: string;
+  suggestionsForImprovement?: string[];
+}
+
+// Embedding
+export interface EmbeddingRequest {
+  texts: string[];
+  model?: string;
+}
+
+export interface EmbeddingResponse {
+  embeddings: number[][];
+  model: string;
+  usage?: {
+    promptTokens?: number;
+    totalTokens?: number;
+  };
+}
+
+// Embedding Dimension Map
+export const EMBEDDING_MODEL_DIMENSIONS: Record<string, number> = {
+  // OpenAI
+  'text-embedding-ada-002': 1536,
+  'text-embedding-3-small': 1536,
+  'text-embedding-3-large': 3072,
+  // OpenRouter (often prefixes OpenAI models)
+  'openai/text-embedding-ada-002': 1536,
+  'openai/text-embedding-3-small': 1536,
+  'openai/text-embedding-3-large': 3072,
+};
+// --- End New Interfaces ---
+
+
 export const AI_PROVIDERS: AIProvider[] = [
   {
     id: 'openai',
@@ -54,6 +136,7 @@ export const AI_PROVIDERS: AIProvider[] = [
     baseUrl: 'https://api.openai.com/v1',
     requiresApiKey: true,
     models: ['gpt-4o', 'gpt-4o-mini', 'gpt-4', 'gpt-3.5-turbo'],
+    embeddingModels: ['text-embedding-3-small', 'text-embedding-3-large', 'text-embedding-ada-002'], // Added
     description: 'Industry-leading models from OpenAI including GPT-4 and GPT-3.5'
   },
   {
@@ -676,14 +759,136 @@ export class EnhancedSecureAIService {
   getSettings(): SecureAISettings {
     return { ...this.settings };
   }
+
+  // --- Placeholder implementations for new methods ---
+
+  async generatePlot(request: PlotGenerationRequest): Promise<PlotGenerationResponse> {
+    console.log('generatePlot called with request:', request); // For debugging
+    // Basic passthrough to generateContent for now, or throw error
+    // This would need a more specific prompt construction logic based on PlotGenerationRequest fields
+    const genericRequest: AIRequest = {
+      ...request,
+      prompt: request.prompt || `Generate plot ideas based on: ${request.existingPlotSummary || 'general fiction concepts'}`
+    };
+    const response = await this.generateContent(genericRequest);
+    return response as PlotGenerationResponse; // Needs proper mapping or specific handling
+    // throw new Error('generatePlot not yet implemented in EnhancedSecureAIService');
+  }
+
+  async developCharacterArc(request: CharacterArcRequest): Promise<CharacterArcResponse> {
+    console.log('developCharacterArc called with request:', request);
+    const genericRequest: AIRequest = {
+      ...request,
+      prompt: request.prompt || `Develop character arc for ${request.characterId || 'a character'} with details: ${JSON.stringify(request.characterData) || ''}`
+    };
+    const response = await this.generateContent(genericRequest);
+    return response as CharacterArcResponse;
+    // throw new Error('developCharacterArc not yet implemented in EnhancedSecureAIService');
+  }
+
+  async analyzeStyleTone(request: StyleToneAnalysisRequest): Promise<StyleToneAnalysisResponse> {
+    console.log('analyzeStyleTone called with request:', request);
+     const genericRequest: AIRequest = {
+      ...request,
+      prompt: request.prompt || `Analyze style/tone for text: "${request.textToAnalyze.substring(0,100)}..."`
+    };
+    const response = await this.generateContent(genericRequest);
+    return response as StyleToneAnalysisResponse;
+    // throw new Error('analyzeStyleTone not yet implemented in EnhancedSecureAIService');
+  }
+
+  private resolveEmbeddingModelName(requestedModel?: string): string | undefined {
+    const provider = AI_PROVIDERS.find(p => p.id === this.settings.defaultProvider);
+    if (!provider) return undefined;
+    const providerSettings = this.settings.providers[provider.id];
+    return requestedModel || providerSettings?.selectedEmbeddingModel || provider.embeddingModels?.[0];
+  }
+
+  async getActiveEmbeddingModelDimension(embeddingModel?: string): Promise<number> {
+    const modelName = this.resolveEmbeddingModelName(embeddingModel);
+    if (!modelName) {
+      console.warn('[EnhancedSecureAIService] Could not resolve embedding model name. Falling back to default dimension 1536.');
+      return 1536;
+    }
+    const dimension = EMBEDDING_MODEL_DIMENSIONS[modelName];
+    if (!dimension) {
+      if (modelName.includes('openai') || modelName.includes('text-embedding')) {
+         console.warn(`[EnhancedSecureAIService] Dimension for ${modelName} not found in map, defaulting to 1536 for OpenAI-like model.`);
+         return 1536;
+      }
+      console.warn(`[EnhancedSecureAIService] Dimension for model ${modelName} not found. Returning default of 1536. Consider updating EMBEDDING_MODEL_DIMENSIONS.`);
+      return 1536;
+    }
+    return dimension;
+  }
+
+  async getEmbeddings(texts: string[], embeddingModel?: string): Promise<number[][]> {
+    if (!this.isInitialized) {
+      await this.initialize();
+    }
+    console.log(`getEmbeddings called for ${texts.length} texts, model: ${embeddingModel}`);
+    // This method would need its own specific implementation to call an embedding endpoint
+    // Similar to how generateContent calls chat/completion endpoints.
+    // For now, this is a placeholder.
+    // It needs to:
+    // 1. Select provider & API key (similar to generateContent)
+    // 2. Get the correct embedding model name (using resolveEmbeddingModelName)
+    // 3. Call the provider's embedding endpoint (e.g., for OpenAI: /v1/embeddings)
+    // 4. Handle response and errors
+
+    // Placeholder:
+    const modelToUse = this.resolveEmbeddingModelName(embeddingModel);
+    if (!modelToUse) throw new Error("No embedding model resolved.");
+
+    // Simulate an OpenAI call structure for embeddings if it's an OpenAI provider
+    const provider = AI_PROVIDERS.find(p => p.id === this.settings.defaultProvider);
+    if (provider && (provider.id === 'openai' || provider.id === 'openrouter')) {
+        const apiKey = await this.getApiKey(provider.id);
+        if (!apiKey) throw new Error (`API key for ${provider.id} not found.`);
+
+        const endpoint = this.settings.providers[provider.id]?.endpoint || provider.baseUrl;
+        let url = `${endpoint}/embeddings`;
+         if (provider.id === 'openrouter' && endpoint) {
+            if (!endpoint.endsWith('/embeddings')) url = `${endpoint}/embeddings`; else url = endpoint;
+        }
+
+
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${apiKey}`,
+                 ...(provider.id === 'openrouter' && {
+                    'HTTP-Referer': window.location.origin, // Example, adjust as needed
+                    'X-Title': 'AI Fiction Writer' // Example
+                 })
+            },
+            body: JSON.stringify({ input: texts, model: modelToUse })
+        });
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.error?.message || `HTTP ${response.status} ${response.statusText}`);
+        }
+        const data = await response.json();
+        if (!data.data || !Array.isArray(data.data) || !data.data[0].embedding) {
+            throw new Error('Invalid embedding response structure');
+        }
+        return data.data.map((item: any) => item.embedding);
+    }
+
+    console.warn("getEmbeddings is using placeholder data for non-OpenAI/OpenRouter providers.");
+    const dimension = await this.getActiveEmbeddingModelDimension(modelToUse);
+    return texts.map(() => Array(dimension).fill(0.01)); // Placeholder
+    // throw new Error('getEmbeddings not fully implemented in EnhancedSecureAIService for all providers.');
+  }
 }
 
 export function createDefaultSecureAISettings(): SecureAISettings {
   return {
     providers: {
-      openai: { isEnabled: false },
+      openai: { isEnabled: false, selectedEmbeddingModel: 'text-embedding-3-small' },
       anthropic: { isEnabled: false },
-      openrouter: { isEnabled: false },
+      openrouter: { isEnabled: false, selectedEmbeddingModel: 'openai/text-embedding-ada-002' },
       huggingface: { isEnabled: false },
       ollama: { isEnabled: false },
       lmstudio: { isEnabled: false }

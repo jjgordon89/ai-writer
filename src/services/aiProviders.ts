@@ -41,6 +41,21 @@ export interface AIResponse {
   };
 }
 
+// Helper map for embedding dimensions
+const EMBEDDING_MODEL_DIMENSIONS: Record<string, number> = {
+  // OpenAI
+  'text-embedding-ada-002': 1536,
+  'text-embedding-3-small': 1536,
+  'text-embedding-3-large': 3072,
+  // OpenRouter (often prefixes OpenAI models)
+  'openai/text-embedding-ada-002': 1536,
+  'openai/text-embedding-3-small': 1536,
+  'openai/text-embedding-3-large': 3072,
+  // Add other providers/models here if known, e.g. Cohere, Google etc.
+  // 'cohere/embed-english-v3.0': 1024,
+  // 'google/text-embedding-004': 768,
+};
+
 import { Character } from '../types';
 
 // Plot Generation Interfaces
@@ -485,6 +500,35 @@ export class AIService {
     return { ...this.settings };
   }
 
+  private resolveEmbeddingModelName(requestedModel?: string): string | undefined {
+    const provider = AI_PROVIDERS.find(p => p.id === this.settings.defaultProvider);
+    if (!provider) return undefined;
+    const providerSettings = this.settings.providers[provider.id];
+
+    return requestedModel || providerSettings?.selectedEmbeddingModel || provider.embeddingModels?.[0];
+  }
+
+  async getActiveEmbeddingModelDimension(embeddingModel?: string): Promise<number> {
+    const modelName = this.resolveEmbeddingModelName(embeddingModel);
+
+    if (!modelName) {
+      console.warn('Could not resolve embedding model name. Falling back to default dimension 1536.');
+      return 1536; // Default or fallback dimension
+    }
+
+    const dimension = EMBEDDING_MODEL_DIMENSIONS[modelName];
+    if (!dimension) {
+      // Attempt to find a generic OpenAI model if the specific one is missing, as they often share dimensions
+      if (modelName.startsWith('text-embedding-') || modelName.startsWith('openai/text-embedding-')) {
+        console.warn(`Dimension for ${modelName} not found in map, defaulting to 1536 for OpenAI-like model.`);
+        return 1536;
+      }
+      console.warn(`Dimension for model ${modelName} not found. Returning default of 1536. Consider updating EMBEDDING_MODEL_DIMENSIONS.`);
+      return 1536; // Fallback dimension
+    }
+    return dimension;
+  }
+
   // Embedding method
   async getEmbeddings(texts: string[], embeddingModel?: string): Promise<number[][]> {
     const provider = AI_PROVIDERS.find(p => p.id === this.settings.defaultProvider);
@@ -501,19 +545,16 @@ export class AIService {
       throw new Error(`API key required for ${provider.name} embeddings.`);
     }
 
-    const modelToUse = embeddingModel || providerSettings.selectedEmbeddingModel || provider.embeddingModels?.[0];
+    const modelToUse = this.resolveEmbeddingModelName(embeddingModel);
     if (!modelToUse) {
       throw new Error(`No embedding model configured for ${provider.name}.`);
     }
 
-    // For now, only OpenAI is implemented
-    if (provider.id === 'openai' || provider.id === 'openrouter') { // Assuming openrouter can use openai embedding endpoint structure
+    // For now, only OpenAI and OpenRouter are implemented for embeddings
+    if (provider.id === 'openai' || provider.id === 'openrouter') {
       return this.callOpenAIEmbeddings(provider, providerSettings, texts, modelToUse);
     } else {
-      // TODO: Implement for other providers or make callEmbeddingProvider more generic
       console.warn(`Embedding generation for ${provider.name} is not yet implemented.`);
-      // Return empty array or throw specific error
-      // For now, let's throw an error as per the instructions to focus on OpenAI
       throw new Error(`Embedding generation for ${provider.name} is not yet implemented.`);
     }
   }

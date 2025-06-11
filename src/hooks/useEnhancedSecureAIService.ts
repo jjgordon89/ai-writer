@@ -1,5 +1,18 @@
-import { useState, useEffect } from 'react';
-import { EnhancedSecureAIService, SecureAISettings, createDefaultSecureAISettings } from '../services/enhancedAIProviders';
+import { useState, useEffect, useCallback } from 'react';
+import {
+  EnhancedSecureAIService,
+  SecureAISettings,
+  createDefaultSecureAISettings,
+  AIRequest, // Added for generateContent if not already implicitly covered
+  PlotGenerationRequest,
+  PlotGenerationResponse,
+  CharacterArcRequest,
+  CharacterArcResponse,
+  StyleToneAnalysisRequest,
+  StyleToneAnalysisResponse,
+  // EmbeddingRequest, // Not directly used in hook return, but good for context
+  // EmbeddingResponse // Not directly used in hook return
+} from '../services/enhancedAIProviders';
 import { useAsyncErrorHandler } from './useAsyncErrorHandler';
 import { ErrorSanitizer } from '../utils/errorSanitization';
 
@@ -120,6 +133,53 @@ export function useEnhancedSecureAIService() {
     }
   }, [settings, reportError]);
 
+  // --- New Methods ---
+
+  const generatePlot = useCallback(async (request: PlotGenerationRequest): Promise<{ success: boolean; data?: PlotGenerationResponse; error?: string }> => {
+    if (!isInitialized) return { success: false, error: 'Service not initialized' };
+    return await safeAsync(
+      async () => ({ success: true, data: await aiService.generatePlot(request) }),
+      { success: false, error: 'Failed to generate plot' },
+      { action: 'generate-plot', metadata: { projectId: request.projectId } }
+    ) || { success: false, error: 'Failed to generate plot' };
+  }, [aiService, isInitialized, safeAsync]);
+
+  const developCharacterArc = useCallback(async (request: CharacterArcRequest): Promise<{ success: boolean; data?: CharacterArcResponse; error?: string }> => {
+    if (!isInitialized) return { success: false, error: 'Service not initialized' };
+    return await safeAsync(
+      async () => ({ success: true, data: await aiService.developCharacterArc(request) }),
+      { success: false, error: 'Failed to develop character arc' },
+      { action: 'develop-character-arc', metadata: { characterId: request.characterId } }
+    ) || { success: false, error: 'Failed to develop character arc' };
+  }, [aiService, isInitialized, safeAsync]);
+
+  const analyzeStyleTone = useCallback(async (request: StyleToneAnalysisRequest): Promise<{ success: boolean; data?: StyleToneAnalysisResponse; error?: string }> => {
+    if (!isInitialized) return { success: false, error: 'Service not initialized' };
+    return await safeAsync(
+      async () => ({ success: true, data: await aiService.analyzeStyleTone(request) }),
+      { success: false, error: 'Failed to analyze style/tone' },
+      { action: 'analyze-style-tone' }
+    ) || { success: false, error: 'Failed to analyze style/tone' };
+  }, [aiService, isInitialized, safeAsync]);
+
+  const getEmbeddings = useCallback(async (texts: string[], embeddingModel?: string): Promise<{ success: boolean; data?: number[][]; error?: string }> => {
+    if (!isInitialized) return { success: false, error: 'Service not initialized' };
+    return await safeAsync(
+      async () => ({ success: true, data: await aiService.getEmbeddings(texts, embeddingModel) }),
+      { success: false, error: 'Failed to get embeddings' },
+      { action: 'get-embeddings' }
+    ) || { success: false, error: 'Failed to get embeddings' };
+  }, [aiService, isInitialized, safeAsync]);
+
+  const getActiveEmbeddingModelDimension = useCallback(async (embeddingModel?: string): Promise<{ success: boolean; data?: number; error?: string }> => {
+    if (!isInitialized) return { success: false, error: 'Service not initialized' };
+     return await safeAsync(
+      async () => ({ success: true, data: await aiService.getActiveEmbeddingModelDimension(embeddingModel) }),
+      { success: false, error: 'Failed to get embedding model dimension' },
+      { action: 'get-active-embedding-model-dimension' }
+    ) || { success: false, error: 'Failed to get embedding model dimension' };
+  }, [aiService, isInitialized, safeAsync]);
+
   return {
     settings,
     aiService,
@@ -130,6 +190,12 @@ export function useEnhancedSecureAIService() {
     getApiKey,
     removeApiKey,
     generateContent,
-    getServiceMetrics
+    getServiceMetrics,
+    // New methods
+    generatePlot,
+    developCharacterArc,
+    analyzeStyleTone,
+    getEmbeddings,
+    getActiveEmbeddingModelDimension
   };
 }

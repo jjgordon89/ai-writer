@@ -1,9 +1,6 @@
 import * as lancedb from '@lancedb/lancedb';
 import { AIService } from './aiProviders';
 
-// Define the embedding dimension for OpenAI models like text-embedding-ada-002 or text-embedding-3-small
-const OPENAI_EMBEDDING_DIMENSION = 1536;
-
 interface TextChunk {
   id: string;
   text: string;
@@ -16,11 +13,16 @@ export class LanceDBService {
   private db: lancedb.Connection | null = null;
   private table: lancedb.Table | null = null;
   private aiService: AIService;
+  private readonly embeddingDimension: number;
   private tableName: string = 'style_tone_analysis';
   private isInitialized: boolean = false;
 
-  constructor(aiService: AIService) {
+  constructor(aiService: AIService, embeddingDimension: number) {
     this.aiService = aiService;
+    this.embeddingDimension = embeddingDimension;
+    if (embeddingDimension <= 0) {
+      throw new Error("Embedding dimension must be a positive number.");
+    }
   }
 
   async initialize(): Promise<void> {
@@ -41,11 +43,11 @@ export class LanceDBService {
       // We'll define a schema based on TextChunk, focusing on the vector.
       // The actual dimension of the vector depends on the embedding model used.
       // This needs to be determined (e.g., OpenAI's text-embedding-ada-002 is 1536).
-      // Use the defined constant for the embedding dimension.
+      // Use the passed embedding dimension.
       const exampleDataForSchema = [{
         id: 'dummy',
         text: 'dummy text',
-        vector: Array(OPENAI_EMBEDDING_DIMENSION).fill(0.1),
+        vector: Array(this.embeddingDimension).fill(0.1),
         source: 'dummy_source',
         createdAt: new Date().toISOString() // Storing as ISO string
       }];
@@ -81,8 +83,8 @@ export class LanceDBService {
     }
     const vector = embeddings[0];
 
-    if (vector.length !== OPENAI_EMBEDDING_DIMENSION) {
-      console.warn(`Generated embedding dimension (${vector.length}) does not match expected dimension (${OPENAI_EMBEDDING_DIMENSION}). Ensure AI Service is configured with the correct model.`);
+    if (vector.length !== this.embeddingDimension) {
+      console.warn(`Generated embedding dimension (${vector.length}) does not match expected dimension (${this.embeddingDimension}). Ensure AI Service is configured with the correct model.`);
       // Potentially throw an error or try to handle, for now, we'll proceed but this is a critical check.
     }
 
@@ -118,8 +120,8 @@ export class LanceDBService {
     }
     const queryVector = embeddings[0];
 
-    if (queryVector.length !== OPENAI_EMBEDDING_DIMENSION) {
-      console.warn(`Generated query embedding dimension (${queryVector.length}) does not match expected dimension (${OPENAI_EMBEDDING_DIMENSION}). Ensure AI Service is configured with the correct model.`);
+    if (queryVector.length !== this.embeddingDimension) {
+      console.warn(`Generated query embedding dimension (${queryVector.length}) does not match expected dimension (${this.embeddingDimension}). Ensure AI Service is configured with the correct model.`);
       // Potentially throw an error.
     }
 
