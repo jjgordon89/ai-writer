@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useReducer, useCallback, useEffect, useRef } from 'react';
-import { Project, Character, StoryArc } from '../types';
+import { Project, Character, StoryArc, StoryNode, StoryEdge, StoryPlannerData, StoryNodeType } from '../types';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import { useAsyncErrorHandler } from '../hooks/useAsyncErrorHandler';
 import { debounce } from '../utils/debounce';
@@ -21,6 +21,12 @@ type ProjectAction =
   | { type: 'ADD_STORY_ARC'; payload: Omit<StoryArc, 'id' | 'createdAt' | 'updatedAt'> }
   | { type: 'UPDATE_STORY_ARC'; payload: { id: string; updates: Partial<StoryArc> } }
   | { type: 'DELETE_STORY_ARC'; payload: string }
+  | { type: 'ADD_STORY_NODE'; payload: Omit<StoryNode, 'id' | 'createdAt' | 'updatedAt'> }
+  | { type: 'UPDATE_STORY_NODE'; payload: { id: string; updates: Partial<StoryNode> } }
+  | { type: 'DELETE_STORY_NODE'; payload: string }
+  | { type: 'ADD_STORY_EDGE'; payload: Omit<StoryEdge, 'id' | 'createdAt' | 'updatedAt'> }
+  | { type: 'UPDATE_STORY_EDGE'; payload: { id: string; updates: Partial<StoryEdge> } }
+  | { type: 'DELETE_STORY_EDGE'; payload: string }
   | { type: 'SET_LOADING'; payload: boolean }
   | { type: 'SET_SAVING'; payload: boolean }
   | { type: 'MARK_SAVED' }
@@ -37,6 +43,12 @@ interface ProjectContextValue {
     addStoryArc: (arc: Omit<StoryArc, 'id' | 'createdAt' | 'updatedAt'>) => void;
     updateStoryArc: (id: string, updates: Partial<StoryArc>) => void;
     deleteStoryArc: (id: string) => void;
+    addStoryNode: (node: Omit<StoryNode, 'id' | 'createdAt' | 'updatedAt'>) => void;
+    updateStoryNode: (id: string, updates: Partial<StoryNode>) => void;
+    deleteStoryNode: (id: string) => void;
+    addStoryEdge: (edge: Omit<StoryEdge, 'id' | 'createdAt' | 'updatedAt'>) => void;
+    updateStoryEdge: (id: string, updates: Partial<StoryEdge>) => void;
+    deleteStoryEdge: (id: string) => void;
     saveProject: () => Promise<void>;
     createNewProject: () => void;
   };
@@ -54,6 +66,7 @@ const createDefaultProject = (): Project => ({
   content: '',
   characters: [],
   storyArcs: [],
+  storyPlannerData: { nodes: [], edges: [] },
   createdAt: new Date(),
   updatedAt: new Date(),
 });
@@ -210,6 +223,128 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
     case 'MARK_DIRTY':
       return { ...state, isDirty: true };
 
+    case 'ADD_STORY_NODE': {
+      const newNode: StoryNode = {
+        ...action.payload,
+        id: crypto.randomUUID(),
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      return {
+        ...state,
+        currentProject: {
+          ...state.currentProject,
+          storyPlannerData: {
+            ...state.currentProject.storyPlannerData!,
+            nodes: [...state.currentProject.storyPlannerData!.nodes, newNode],
+          },
+          updatedAt: new Date()
+        },
+        isDirty: true
+      };
+    }
+
+    case 'UPDATE_STORY_NODE': {
+      const updatedNodes = state.currentProject.storyPlannerData!.nodes.map(node =>
+        node.id === action.payload.id
+          ? { ...node, ...action.payload.updates, updatedAt: new Date() }
+          : node
+      );
+      return {
+        ...state,
+        currentProject: {
+          ...state.currentProject,
+          storyPlannerData: {
+            ...state.currentProject.storyPlannerData!,
+            nodes: updatedNodes,
+          },
+          updatedAt: new Date()
+        },
+        isDirty: true
+      };
+    }
+
+    case 'DELETE_STORY_NODE': {
+      const filteredNodes = state.currentProject.storyPlannerData!.nodes.filter(
+        node => node.id !== action.payload
+      );
+      const filteredEdges = state.currentProject.storyPlannerData!.edges.filter(
+        edge => edge.sourceNodeId !== action.payload && edge.targetNodeId !== action.payload
+      );
+      return {
+        ...state,
+        currentProject: {
+          ...state.currentProject,
+          storyPlannerData: {
+            ...state.currentProject.storyPlannerData!,
+            nodes: filteredNodes,
+            edges: filteredEdges,
+          },
+          updatedAt: new Date()
+        },
+        isDirty: true
+      };
+    }
+
+    case 'ADD_STORY_EDGE': {
+      const newEdge: StoryEdge = {
+        ...action.payload,
+        id: crypto.randomUUID(),
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      return {
+        ...state,
+        currentProject: {
+          ...state.currentProject,
+          storyPlannerData: {
+            ...state.currentProject.storyPlannerData!,
+            edges: [...state.currentProject.storyPlannerData!.edges, newEdge],
+          },
+          updatedAt: new Date()
+        },
+        isDirty: true
+      };
+    }
+
+    case 'UPDATE_STORY_EDGE': {
+      const updatedEdges = state.currentProject.storyPlannerData!.edges.map(edge =>
+        edge.id === action.payload.id
+          ? { ...edge, ...action.payload.updates, updatedAt: new Date() }
+          : edge
+      );
+      return {
+        ...state,
+        currentProject: {
+          ...state.currentProject,
+          storyPlannerData: {
+            ...state.currentProject.storyPlannerData!,
+            edges: updatedEdges,
+          },
+          updatedAt: new Date()
+        },
+        isDirty: true
+      };
+    }
+
+    case 'DELETE_STORY_EDGE': {
+      const filteredEdges = state.currentProject.storyPlannerData!.edges.filter(
+        edge => edge.id !== action.payload
+      );
+      return {
+        ...state,
+        currentProject: {
+          ...state.currentProject,
+          storyPlannerData: {
+            ...state.currentProject.storyPlannerData!,
+            edges: filteredEdges,
+          },
+          updatedAt: new Date()
+        },
+        isDirty: true
+      };
+    }
+
     default:
       return state;
   }
@@ -285,6 +420,30 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
 
     deleteStoryArc: useCallback((id: string) => {
       dispatch({ type: 'DELETE_STORY_ARC', payload: id });
+    }, []),
+
+    addStoryNode: useCallback((node: Omit<StoryNode, 'id' | 'createdAt' | 'updatedAt'>) => {
+      dispatch({ type: 'ADD_STORY_NODE', payload: node });
+    }, []),
+
+    updateStoryNode: useCallback((id: string, updates: Partial<StoryNode>) => {
+      dispatch({ type: 'UPDATE_STORY_NODE', payload: { id, updates } });
+    }, []),
+
+    deleteStoryNode: useCallback((id: string) => {
+      dispatch({ type: 'DELETE_STORY_NODE', payload: id });
+    }, []),
+
+    addStoryEdge: useCallback((edge: Omit<StoryEdge, 'id' | 'createdAt' | 'updatedAt'>) => {
+      dispatch({ type: 'ADD_STORY_EDGE', payload: edge });
+    }, []),
+
+    updateStoryEdge: useCallback((id: string, updates: Partial<StoryEdge>) => {
+      dispatch({ type: 'UPDATE_STORY_EDGE', payload: { id, updates } });
+    }, []),
+
+    deleteStoryEdge: useCallback((id: string) => {
+      dispatch({ type: 'DELETE_STORY_EDGE', payload: id });
     }, []),
 
     saveProject: useCallback(async () => {

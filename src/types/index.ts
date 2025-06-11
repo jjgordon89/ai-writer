@@ -1,3 +1,40 @@
+export enum StoryNodeType {
+  IDEA = 'idea',
+  SCENE = 'scene',
+  CHARACTER_SKETCH = 'characterSketch',
+  PLOT_POINT = 'plotPoint',
+  LOCATION_SKETCH = 'locationSketch',
+  NOTE = 'note',
+}
+
+export interface StoryNode {
+  id: string;
+  type: StoryNodeType;
+  label: string;
+  content?: string;
+  position: { x: number; y: number };
+  color?: string;
+  linkedCharacterId?: string;
+  linkedStoryArcId?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface StoryEdge {
+  id: string;
+  sourceNodeId: string;
+  targetNodeId: string;
+  label?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface StoryPlannerData {
+  nodes: StoryNode[];
+  edges: StoryEdge[];
+  // viewport?: { x: number, y: number, zoom: number }; // Future consideration
+}
+
 export interface Character {
   id: string;
   name: string;
@@ -59,6 +96,7 @@ export interface Project {
   content: string;
   characters: Character[];
   storyArcs: StoryArc[];
+  storyPlannerData?: StoryPlannerData;
   createdAt: Date;
   updatedAt: Date;
 }

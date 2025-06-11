@@ -1,3 +1,35 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Add to index.css or similar global stylesheet */
+.story-node-btn {
+  background-color: #f0f0f0;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-size: 0.75em;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+.story-node-btn:hover {
+  background-color: #e0e0e0;
+}
+.story-node-btn-delete, .story-node-btn-cancelLink {
+  background-color: #ffdddd; /* Light red */
+}
+.story-node-btn-delete:hover, .story-node-btn-cancelLink:hover {
+  background-color: #ffcccc;
+}
+.story-node-btn-completeLink {
+  background-color: #ddffdd; /* Light green */
+}
+.story-node-btn-completeLink:hover {
+  background-color: #ccffcc;
+}
+.story-node-btn-link {
+  background-color: #ddeeff; /* Light blue/purple */
+}
+.story-node-btn-link:hover {
+  background-color: #cceeff;
+}
