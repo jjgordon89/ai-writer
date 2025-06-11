@@ -1,3 +1,23 @@
+export enum DateType {
+  ABSOLUTE = 'absolute',
+  RELATIVE = 'relative',
+}
+
+export interface TimelineEvent {
+  id: string;
+  title: string;
+  description?: string;
+  dateType: DateType;
+  dateValue: string; // ISO string for absolute, descriptive string for relative
+  endDateValue?: string; // Optional, for event duration
+  linkedCharacterIds?: string[];
+  linkedStoryArcIds?: string[];
+  tags?: string[];
+  color?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export enum StoryNodeType {
   IDEA = 'idea',
   SCENE = 'scene',
@@ -97,6 +117,7 @@ export interface Project {
   characters: Character[];
   storyArcs: StoryArc[];
   storyPlannerData?: StoryPlannerData;
+  timelineEvents?: TimelineEvent[];
   createdAt: Date;
   updatedAt: Date;
 }

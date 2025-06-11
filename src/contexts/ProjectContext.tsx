@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useReducer, useCallback, useEffect, useRef } from 'react';
-import { Project, Character, StoryArc, StoryNode, StoryEdge, StoryPlannerData, StoryNodeType } from '../types';
+import { Project, Character, StoryArc, StoryNode, StoryEdge, StoryPlannerData, StoryNodeType, TimelineEvent, DateType } from '../types';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import { useAsyncErrorHandler } from '../hooks/useAsyncErrorHandler';
 import { debounce } from '../utils/debounce';
@@ -27,6 +27,9 @@ type ProjectAction =
   | { type: 'ADD_STORY_EDGE'; payload: Omit<StoryEdge, 'id' | 'createdAt' | 'updatedAt'> }
   | { type: 'UPDATE_STORY_EDGE'; payload: { id: string; updates: Partial<StoryEdge> } }
   | { type: 'DELETE_STORY_EDGE'; payload: string }
+  | { type: 'ADD_TIMELINE_EVENT'; payload: Omit<TimelineEvent, 'id' | 'createdAt' | 'updatedAt'> }
+  | { type: 'UPDATE_TIMELINE_EVENT'; payload: { id: string; updates: Partial<TimelineEvent> } }
+  | { type: 'DELETE_TIMELINE_EVENT'; payload: string }
   | { type: 'SET_LOADING'; payload: boolean }
   | { type: 'SET_SAVING'; payload: boolean }
   | { type: 'MARK_SAVED' }
@@ -49,6 +52,9 @@ interface ProjectContextValue {
     addStoryEdge: (edge: Omit<StoryEdge, 'id' | 'createdAt' | 'updatedAt'>) => void;
     updateStoryEdge: (id: string, updates: Partial<StoryEdge>) => void;
     deleteStoryEdge: (id: string) => void;
+    addTimelineEvent: (event: Omit<TimelineEvent, 'id' | 'createdAt' | 'updatedAt'>) => void;
+    updateTimelineEvent: (id: string, updates: Partial<TimelineEvent>) => void;
+    deleteTimelineEvent: (id: string) => void;
     saveProject: () => Promise<void>;
     createNewProject: () => void;
   };
@@ -67,6 +73,7 @@ const createDefaultProject = (): Project => ({
   characters: [],
   storyArcs: [],
   storyPlannerData: { nodes: [], edges: [] },
+  timelineEvents: [],
   createdAt: new Date(),
   updatedAt: new Date(),
 });
@@ -345,6 +352,56 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
       };
     }
 
+    case 'ADD_TIMELINE_EVENT': {
+      const newEvent: TimelineEvent = {
+        ...action.payload,
+        id: crypto.randomUUID(),
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      return {
+        ...state,
+        currentProject: {
+          ...state.currentProject,
+          timelineEvents: [...(state.currentProject.timelineEvents || []), newEvent],
+          updatedAt: new Date()
+        },
+        isDirty: true
+      };
+    }
+
+    case 'UPDATE_TIMELINE_EVENT': {
+      const updatedEvents = (state.currentProject.timelineEvents || []).map(event =>
+        event.id === action.payload.id
+          ? { ...event, ...action.payload.updates, updatedAt: new Date() }
+          : event
+      );
+      return {
+        ...state,
+        currentProject: {
+          ...state.currentProject,
+          timelineEvents: updatedEvents,
+          updatedAt: new Date()
+        },
+        isDirty: true
+      };
+    }
+
+    case 'DELETE_TIMELINE_EVENT': {
+      const filteredEvents = (state.currentProject.timelineEvents || []).filter(
+        event => event.id !== action.payload
+      );
+      return {
+        ...state,
+        currentProject: {
+          ...state.currentProject,
+          timelineEvents: filteredEvents,
+          updatedAt: new Date()
+        },
+        isDirty: true
+      };
+    }
+
     default:
       return state;
   }
@@ -444,6 +501,18 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
 
     deleteStoryEdge: useCallback((id: string) => {
       dispatch({ type: 'DELETE_STORY_EDGE', payload: id });
+    }, []),
+
+    addTimelineEvent: useCallback((event: Omit<TimelineEvent, 'id' | 'createdAt' | 'updatedAt'>) => {
+      dispatch({ type: 'ADD_TIMELINE_EVENT', payload: event });
+    }, []),
+
+    updateTimelineEvent: useCallback((id: string, updates: Partial<TimelineEvent>) => {
+      dispatch({ type: 'UPDATE_TIMELINE_EVENT', payload: { id, updates } });
+    }, []),
+
+    deleteTimelineEvent: useCallback((id: string) => {
+      dispatch({ type: 'DELETE_TIMELINE_EVENT', payload: id });
     }, []),
 
     saveProject: useCallback(async () => {

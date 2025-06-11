@@ -1,7 +1,26 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { ProjectProvider, useProject } from '../ProjectContext';
-import { Project } from '../../types';
+import { ProjectProvider, useProject, ProjectState } from '../ProjectContext'; // Assuming ProjectState is exported
+import { Project, DateType, TimelineEvent } from '../../types'; // Added DateType, TimelineEvent
+
+// Helper function to create a default project (if not already available from context file directly)
+// This should mirror your actual createDefaultProject structure
+const createDefaultProject = (): Project => ({
+  id: crypto.randomUUID(),
+  title: 'Untitled Novel',
+  description: '',
+  genre: '',
+  targetWordCount: 80000,
+  currentWordCount: 0,
+  content: '',
+  characters: [],
+  storyArcs: [],
+  storyPlannerData: { nodes: [], edges: [] },
+  timelineEvents: [],
+  createdAt: new Date(),
+  updatedAt: new Date(),
+});
+
 
 const mockLocalStorage = {
   getItem: vi.fn(),
@@ -157,5 +176,153 @@ describe('ProjectContext', () => {
     expect(() => {
       renderHook(() => useProject());
     }).toThrow('useProject must be used within a ProjectProvider');
+  });
+});
+
+describe('Project Reducer - Timeline Events (via Context)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Ensure localStorage is reset or set to a state that doesn't interfere
+    // For these specific reducer tests, we often want a fresh default state
+    const defaultProject = createDefaultProject();
+    mockLocalStorage.getItem.mockReturnValue(JSON.stringify(defaultProject));
+  });
+
+  it('should handle ADD_TIMELINE_EVENT', () => {
+    const { result } = renderHook(() => useProject(), { wrapper });
+    const initialProject = result.current.state.currentProject;
+
+    const newEventPayload = {
+      title: 'New Event',
+      dateType: DateType.ABSOLUTE,
+      dateValue: '2024-01-01',
+      description: 'A new event'
+    };
+
+    act(() => {
+      result.current.actions.addTimelineEvent(newEventPayload);
+    });
+
+    const currentTimelineEvents = result.current.state.currentProject.timelineEvents || [];
+    expect(currentTimelineEvents).toHaveLength(1);
+    expect(currentTimelineEvents[0].title).toBe('New Event');
+    expect(currentTimelineEvents[0].id).toBeDefined();
+    expect(result.current.state.isDirty).toBe(true);
+    expect(result.current.state.currentProject.updatedAt).not.toEqual(initialProject.updatedAt);
+  });
+
+  it('should handle UPDATE_TIMELINE_EVENT', () => {
+    const { result } = renderHook(() => useProject(), { wrapper });
+    const eventId = 'event-to-update';
+    const initialEvent: TimelineEvent = {
+      id: eventId,
+      title: 'Old Title',
+      dateType: DateType.ABSOLUTE,
+      dateValue: '2023-12-01',
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+    const otherEvent: TimelineEvent = {
+      id: 'other-event',
+      title: 'Other Event',
+      dateType: DateType.RELATIVE,
+      dateValue: 'Beginning',
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+
+    // Setup initial state with some timeline events
+    act(() => {
+      result.current.actions.setProject({
+        ...result.current.state.currentProject,
+        timelineEvents: [initialEvent, otherEvent]
+      });
+    });
+     act(() => { // Mark as not dirty after setup
+      result.current.actions.markAsSaved(); // You'd need a markAsSaved or similar action
+    });
+
+
+    const updates = { title: 'Updated Title', description: 'Now with description' };
+    act(() => {
+      result.current.actions.updateTimelineEvent(eventId, updates);
+    });
+
+    const currentTimelineEvents = result.current.state.currentProject.timelineEvents || [];
+    const updatedEvent = currentTimelineEvents.find(e => e.id === eventId);
+    expect(updatedEvent?.title).toBe('Updated Title');
+    expect(updatedEvent?.description).toBe('Now with description');
+    expect(currentTimelineEvents.find(e => e.id === 'other-event')?.title).toBe('Other Event');
+    expect(result.current.state.isDirty).toBe(true);
+  });
+
+  it('should handle DELETE_TIMELINE_EVENT', () => {
+    const { result } = renderHook(() => useProject(), { wrapper });
+    const eventIdToDelete = 'event-to-delete';
+    const event1: TimelineEvent = {
+      id: 'event1',
+      title: 'Event 1',
+      dateType: DateType.ABSOLUTE,
+      dateValue: '2024-01-01',
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+    const eventToDelete: TimelineEvent = {
+      id: eventIdToDelete,
+      title: 'Event To Delete',
+      dateType: DateType.ABSOLUTE,
+      dateValue: '2024-02-01',
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+
+    act(() => {
+      result.current.actions.setProject({
+        ...result.current.state.currentProject,
+        timelineEvents: [event1, eventToDelete]
+      });
+    });
+    act(() => { // Mark as not dirty after setup
+       result.current.actions.markAsSaved();
+    });
+
+    act(() => {
+      result.current.actions.deleteTimelineEvent(eventIdToDelete);
+    });
+
+    const currentTimelineEvents = result.current.state.currentProject.timelineEvents || [];
+    expect(currentTimelineEvents).toHaveLength(1);
+    expect(currentTimelineEvents.find(e => e.id === eventIdToDelete)).toBeUndefined();
+    expect(currentTimelineEvents[0]?.id).toBe('event1');
+    expect(result.current.state.isDirty).toBe(true);
+  });
+
+  // Test case for ADD_TIMELINE_EVENT when timelineEvents is initially undefined in a loaded project
+  it('should handle ADD_TIMELINE_EVENT when timelineEvents is undefined in loaded project', () => {
+    const projectWithoutTimeline: Project = {
+      ...createDefaultProject(),
+      id: 'project-no-timeline',
+      timelineEvents: undefined // Explicitly undefined
+    };
+    mockLocalStorage.getItem.mockReturnValue(JSON.stringify(projectWithoutTimeline)); // Simulate loading this project
+
+    const { result } = renderHook(() => useProject(), { wrapper });
+     expect(result.current.state.currentProject.timelineEvents).toBeUndefined();
+
+
+    const newEventPayload = {
+      title: 'First Event',
+      dateType: DateType.ABSOLUTE,
+      dateValue: '2024-03-01'
+    };
+    act(() => {
+      result.current.actions.addTimelineEvent(newEventPayload);
+    });
+
+    const currentTimelineEvents = result.current.state.currentProject.timelineEvents;
+    expect(currentTimelineEvents).toBeDefined();
+    expect(currentTimelineEvents).toHaveLength(1);
+    expect(currentTimelineEvents![0].title).toBe('First Event');
+    expect(result.current.state.isDirty).toBe(true);
   });
 });
