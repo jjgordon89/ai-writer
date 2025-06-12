@@ -1,0 +1,158 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Project {
+  id               String   @id @default(cuid())
+  title            String
+  description      String?
+  genre            String?
+  targetWordCount  Int      @default(80000)
+  currentWordCount Int      @default(0)
+  content          String?
+  version          Int      @default(1)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  // Relations
+  characters     Character[]
+  storyArcs      StoryArc[]
+  timelineEvents TimelineEvent[]
+  storyNodes     StoryNode[]
+  storyEdges     StoryEdge[]
+
+  @@map("projects")
+}
+
+model Character {
+  id            String   @id @default(cuid())
+  projectId     String
+  name          String
+  role          String   // protagonist, antagonist, supporting, minor
+  age           Int?
+  description   String?
+  backstory     String?
+  traits        String?  // JSON array as string
+  relationships String?  // JSON array as string
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  project         Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  linkedStoryNodes StoryNode[] @relation("CharacterStoryNodes")
+
+  @@map("characters")
+}
+
+model StoryArc {
+  id          String   @id @default(cuid())
+  projectId   String
+  title       String
+  type        String   // main, subplot, character
+  description String?
+  acts        String?  // JSON array as string
+  characters  String?  // JSON array of character IDs as string
+  status      String   @default("planning") // planning, active, completed
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  project          Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  linkedStoryNodes StoryNode[] @relation("StoryArcStoryNodes")
+
+  @@map("story_arcs")
+}
+
+model TimelineEvent {
+  id                  String   @id @default(cuid())
+  projectId           String
+  title               String
+  description         String?
+  dateType            String   // absolute, relative
+  dateValue           String
+  endDateValue        String?
+  linkedCharacterIds  String?  // JSON array as string
+  linkedStoryArcIds   String?  // JSON array as string
+  tags                String?  // JSON array as string
+  color               String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  // Relations
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("timeline_events")
+}
+
+model StoryNode {
+  id                String   @id @default(cuid())
+  projectId         String
+  type              String   // idea, scene, characterSketch, plotPoint, locationSketch, note
+  label             String
+  content           String?
+  positionX         Float
+  positionY         Float
+  color             String?
+  linkedCharacterId String?
+  linkedStoryArcId  String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  // Relations
+  project          Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  linkedCharacter  Character? @relation("CharacterStoryNodes", fields: [linkedCharacterId], references: [id])
+  linkedStoryArc   StoryArc?  @relation("StoryArcStoryNodes", fields: [linkedStoryArcId], references: [id])
+  sourceEdges      StoryEdge[] @relation("SourceNode")
+  targetEdges      StoryEdge[] @relation("TargetNode")
+
+  @@map("story_nodes")
+}
+
+model StoryEdge {
+  id           String   @id @default(cuid())
+  projectId    String
+  sourceNodeId String
+  targetNodeId String
+  label        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  project    Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  sourceNode StoryNode @relation("SourceNode", fields: [sourceNodeId], references: [id], onDelete: Cascade)
+  targetNode StoryNode @relation("TargetNode", fields: [targetNodeId], references: [id], onDelete: Cascade)
+
+  @@map("story_edges")
+}
+
+// Backup and migration tracking
+model DatabaseMigration {
+  id        String   @id @default(cuid())
+  version   String   @unique
+  appliedAt DateTime @default(now())
+  checksum  String?
+
+  @@map("database_migrations")
+}
+
+// Performance and analytics
+model ProjectAnalytics {
+  id              String   @id @default(cuid())
+  projectId       String
+  wordCount       Int
+  characterCount  Int
+  sessionDuration Int      // in seconds
+  recordedAt      DateTime @default(now())
+
+  @@map("project_analytics")
+}

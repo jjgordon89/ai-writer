@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '../../test/utils/test-utils';
+import { render, screen } from '../../../test/utils/test-utils';
 import { VirtualListOptimized } from '../VirtualListOptimized';
 
 const mockItems = Array.from({ length: 100 }, (_, i) => ({
@@ -8,7 +8,7 @@ const mockItems = Array.from({ length: 100 }, (_, i) => ({
   value: i * 10,
 }));
 
-const mockRenderItem = (item: typeof mockItems[0], index: number) => (
+const mockRenderItem = (item: typeof mockItems[0]) => (
   <div key={item.id} data-testid={`item-${item.id}`}>
     {item.name}: {item.value}
   </div>
