@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useReducer, useCallback, useEffect, useRef } from 'react';
-import { Project, Character, StoryArc } from '../types';
+import { Project, Character, StoryArc, StoryNode, StoryEdge, StoryPlannerData, StoryNodeType, TimelineEvent, DateType, ProjectTemplate, TemplateSubEntity, TemplateStoryEdge } from '../types';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import { useAsyncErrorHandler } from '../hooks/useAsyncErrorHandler';
 import { debounce } from '../utils/debounce';
@@ -21,6 +21,15 @@ type ProjectAction =
   | { type: 'ADD_STORY_ARC'; payload: Omit<StoryArc, 'id' | 'createdAt' | 'updatedAt'> }
   | { type: 'UPDATE_STORY_ARC'; payload: { id: string; updates: Partial<StoryArc> } }
   | { type: 'DELETE_STORY_ARC'; payload: string }
+  | { type: 'ADD_STORY_NODE'; payload: Omit<StoryNode, 'id' | 'createdAt' | 'updatedAt'> }
+  | { type: 'UPDATE_STORY_NODE'; payload: { id: string; updates: Partial<StoryNode> } }
+  | { type: 'DELETE_STORY_NODE'; payload: string }
+  | { type: 'ADD_STORY_EDGE'; payload: Omit<StoryEdge, 'id' | 'createdAt' | 'updatedAt'> }
+  | { type: 'UPDATE_STORY_EDGE'; payload: { id: string; updates: Partial<StoryEdge> } }
+  | { type: 'DELETE_STORY_EDGE'; payload: string }
+  | { type: 'ADD_TIMELINE_EVENT'; payload: Omit<TimelineEvent, 'id' | 'createdAt' | 'updatedAt'> }
+  | { type: 'UPDATE_TIMELINE_EVENT'; payload: { id: string; updates: Partial<TimelineEvent> } }
+  | { type: 'DELETE_TIMELINE_EVENT'; payload: string }
   | { type: 'SET_LOADING'; payload: boolean }
   | { type: 'SET_SAVING'; payload: boolean }
   | { type: 'MARK_SAVED' }
@@ -37,8 +46,17 @@ interface ProjectContextValue {
     addStoryArc: (arc: Omit<StoryArc, 'id' | 'createdAt' | 'updatedAt'>) => void;
     updateStoryArc: (id: string, updates: Partial<StoryArc>) => void;
     deleteStoryArc: (id: string) => void;
+    addStoryNode: (node: Omit<StoryNode, 'id' | 'createdAt' | 'updatedAt'>) => void;
+    updateStoryNode: (id: string, updates: Partial<StoryNode>) => void;
+    deleteStoryNode: (id: string) => void;
+    addStoryEdge: (edge: Omit<StoryEdge, 'id' | 'createdAt' | 'updatedAt'>) => void;
+    updateStoryEdge: (id: string, updates: Partial<StoryEdge>) => void;
+    deleteStoryEdge: (id: string) => void;
+    addTimelineEvent: (event: Omit<TimelineEvent, 'id' | 'createdAt' | 'updatedAt'>) => void;
+    updateTimelineEvent: (id: string, updates: Partial<TimelineEvent>) => void;
+    deleteTimelineEvent: (id: string) => void;
     saveProject: () => Promise<void>;
-    createNewProject: () => void;
+    createNewProject: (confirmCallback?: () => boolean, template?: ProjectTemplate) => void;
   };
 }
 
@@ -54,6 +72,8 @@ const createDefaultProject = (): Project => ({
   content: '',
   characters: [],
   storyArcs: [],
+  storyPlannerData: { nodes: [], edges: [] },
+  timelineEvents: [],
   createdAt: new Date(),
   updatedAt: new Date(),
 });
@@ -210,6 +230,178 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
     case 'MARK_DIRTY':
       return { ...state, isDirty: true };
 
+    case 'ADD_STORY_NODE': {
+      const newNode: StoryNode = {
+        ...action.payload,
+        id: crypto.randomUUID(),
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      return {
+        ...state,
+        currentProject: {
+          ...state.currentProject,
+          storyPlannerData: {
+            ...state.currentProject.storyPlannerData!,
+            nodes: [...state.currentProject.storyPlannerData!.nodes, newNode],
+          },
+          updatedAt: new Date()
+        },
+        isDirty: true
+      };
+    }
+
+    case 'UPDATE_STORY_NODE': {
+      const updatedNodes = state.currentProject.storyPlannerData!.nodes.map(node =>
+        node.id === action.payload.id
+          ? { ...node, ...action.payload.updates, updatedAt: new Date() }
+          : node
+      );
+      return {
+        ...state,
+        currentProject: {
+          ...state.currentProject,
+          storyPlannerData: {
+            ...state.currentProject.storyPlannerData!,
+            nodes: updatedNodes,
+          },
+          updatedAt: new Date()
+        },
+        isDirty: true
+      };
+    }
+
+    case 'DELETE_STORY_NODE': {
+      const filteredNodes = state.currentProject.storyPlannerData!.nodes.filter(
+        node => node.id !== action.payload
+      );
+      const filteredEdges = state.currentProject.storyPlannerData!.edges.filter(
+        edge => edge.sourceNodeId !== action.payload && edge.targetNodeId !== action.payload
+      );
+      return {
+        ...state,
+        currentProject: {
+          ...state.currentProject,
+          storyPlannerData: {
+            ...state.currentProject.storyPlannerData!,
+            nodes: filteredNodes,
+            edges: filteredEdges,
+          },
+          updatedAt: new Date()
+        },
+        isDirty: true
+      };
+    }
+
+    case 'ADD_STORY_EDGE': {
+      const newEdge: StoryEdge = {
+        ...action.payload,
+        id: crypto.randomUUID(),
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      return {
+        ...state,
+        currentProject: {
+          ...state.currentProject,
+          storyPlannerData: {
+            ...state.currentProject.storyPlannerData!,
+            edges: [...state.currentProject.storyPlannerData!.edges, newEdge],
+          },
+          updatedAt: new Date()
+        },
+        isDirty: true
+      };
+    }
+
+    case 'UPDATE_STORY_EDGE': {
+      const updatedEdges = state.currentProject.storyPlannerData!.edges.map(edge =>
+        edge.id === action.payload.id
+          ? { ...edge, ...action.payload.updates, updatedAt: new Date() }
+          : edge
+      );
+      return {
+        ...state,
+        currentProject: {
+          ...state.currentProject,
+          storyPlannerData: {
+            ...state.currentProject.storyPlannerData!,
+            edges: updatedEdges,
+          },
+          updatedAt: new Date()
+        },
+        isDirty: true
+      };
+    }
+
+    case 'DELETE_STORY_EDGE': {
+      const filteredEdges = state.currentProject.storyPlannerData!.edges.filter(
+        edge => edge.id !== action.payload
+      );
+      return {
+        ...state,
+        currentProject: {
+          ...state.currentProject,
+          storyPlannerData: {
+            ...state.currentProject.storyPlannerData!,
+            edges: filteredEdges,
+          },
+          updatedAt: new Date()
+        },
+        isDirty: true
+      };
+    }
+
+    case 'ADD_TIMELINE_EVENT': {
+      const newEvent: TimelineEvent = {
+        ...action.payload,
+        id: crypto.randomUUID(),
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      return {
+        ...state,
+        currentProject: {
+          ...state.currentProject,
+          timelineEvents: [...(state.currentProject.timelineEvents || []), newEvent],
+          updatedAt: new Date()
+        },
+        isDirty: true
+      };
+    }
+
+    case 'UPDATE_TIMELINE_EVENT': {
+      const updatedEvents = (state.currentProject.timelineEvents || []).map(event =>
+        event.id === action.payload.id
+          ? { ...event, ...action.payload.updates, updatedAt: new Date() }
+          : event
+      );
+      return {
+        ...state,
+        currentProject: {
+          ...state.currentProject,
+          timelineEvents: updatedEvents,
+          updatedAt: new Date()
+        },
+        isDirty: true
+      };
+    }
+
+    case 'DELETE_TIMELINE_EVENT': {
+      const filteredEvents = (state.currentProject.timelineEvents || []).filter(
+        event => event.id !== action.payload
+      );
+      return {
+        ...state,
+        currentProject: {
+          ...state.currentProject,
+          timelineEvents: filteredEvents,
+          updatedAt: new Date()
+        },
+        isDirty: true
+      };
+    }
+
     default:
       return state;
   }
@@ -287,6 +479,42 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
       dispatch({ type: 'DELETE_STORY_ARC', payload: id });
     }, []),
 
+    addStoryNode: useCallback((node: Omit<StoryNode, 'id' | 'createdAt' | 'updatedAt'>) => {
+      dispatch({ type: 'ADD_STORY_NODE', payload: node });
+    }, []),
+
+    updateStoryNode: useCallback((id: string, updates: Partial<StoryNode>) => {
+      dispatch({ type: 'UPDATE_STORY_NODE', payload: { id, updates } });
+    }, []),
+
+    deleteStoryNode: useCallback((id: string) => {
+      dispatch({ type: 'DELETE_STORY_NODE', payload: id });
+    }, []),
+
+    addStoryEdge: useCallback((edge: Omit<StoryEdge, 'id' | 'createdAt' | 'updatedAt'>) => {
+      dispatch({ type: 'ADD_STORY_EDGE', payload: edge });
+    }, []),
+
+    updateStoryEdge: useCallback((id: string, updates: Partial<StoryEdge>) => {
+      dispatch({ type: 'UPDATE_STORY_EDGE', payload: { id, updates } });
+    }, []),
+
+    deleteStoryEdge: useCallback((id: string) => {
+      dispatch({ type: 'DELETE_STORY_EDGE', payload: id });
+    }, []),
+
+    addTimelineEvent: useCallback((event: Omit<TimelineEvent, 'id' | 'createdAt' | 'updatedAt'>) => {
+      dispatch({ type: 'ADD_TIMELINE_EVENT', payload: event });
+    }, []),
+
+    updateTimelineEvent: useCallback((id: string, updates: Partial<TimelineEvent>) => {
+      dispatch({ type: 'UPDATE_TIMELINE_EVENT', payload: { id, updates } });
+    }, []),
+
+    deleteTimelineEvent: useCallback((id: string) => {
+      dispatch({ type: 'DELETE_TIMELINE_EVENT', payload: id });
+    }, []),
+
     saveProject: useCallback(async () => {
       await wrapAsync(async () => {
         dispatch({ type: 'SET_SAVING', payload: true });
@@ -301,18 +529,130 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
       }, { action: 'save-project' });
     }, [state.currentProject, setStoredProject, wrapAsync]),
 
-    createNewProject: useCallback((confirmCallback?: () => boolean) => {
-      // If there are unsaved changes, use the provided callback for confirmation
-      // The callback should return true to proceed or false to cancel
+    createNewProject: useCallback((confirmCallback?: () => boolean, template?: ProjectTemplate) => {
       if (state.isDirty) {
-        const shouldProceed = confirmCallback ? confirmCallback() : true;
+        const shouldProceed = confirmCallback ? confirmCallback() : window.confirm("You have unsaved changes. Are you sure you want to create a new project? Your current changes will be lost.");
         if (!shouldProceed) {
           return;
         }
       }
-      
-      const newProject = createDefaultProject();
-      dispatch({ type: 'SET_PROJECT', payload: newProject });
+
+      if (template) {
+        const newProjectBase = createDefaultProject(); // Get all default fields
+        const newProject: Project = {
+          ...newProjectBase,
+          id: crypto.randomUUID(), // Always new ID
+          createdAt: new Date(),    // Always new date
+          updatedAt: new Date(),    // Always new date
+
+          // Overwrite with template fields if they exist
+          title: template.title || newProjectBase.title,
+          description: template.description || newProjectBase.description,
+          genre: template.genre || newProjectBase.genre,
+          targetWordCount: template.targetWordCount || newProjectBase.targetWordCount,
+          content: template.content || newProjectBase.content,
+
+          characters: [],
+          storyArcs: [],
+          timelineEvents: [],
+          storyPlannerData: { nodes: [], edges: [] },
+        };
+
+        const characterIdMap = new Map<string, string>();
+        if (template.characters) {
+          newProject.characters = template.characters.map(tc => {
+            const newCharId = crypto.randomUUID();
+            if (tc.templateId) characterIdMap.set(tc.templateId, newCharId);
+            // Ensure all required fields are present
+            return {
+              role: 'supporting', // Default role if not in template
+              backstory: '',
+              traits: [],
+              relationships: [],
+              notes: '',
+              ...tc,
+              id: newCharId,
+              createdAt: newProject.createdAt,
+              updatedAt: newProject.updatedAt,
+            } as Character;
+          });
+        }
+
+        const storyArcIdMap = new Map<string, string>();
+        if (template.storyArcs) {
+          newProject.storyArcs = template.storyArcs.map(tsa => {
+            const newArcId = crypto.randomUUID();
+            if (tsa.templateId) storyArcIdMap.set(tsa.templateId, newArcId);
+            const updatedLinkedCharIds = (tsa.characters || []).map(charTemplateId => characterIdMap.get(charTemplateId) || charTemplateId);
+            return {
+              type: 'main', // Default type
+              acts: [],
+              status: 'planning', // Default status
+              notes: '',
+              ...tsa,
+              id: newArcId,
+              characters: updatedLinkedCharIds,
+              createdAt: newProject.createdAt,
+              updatedAt: newProject.updatedAt,
+            } as StoryArc;
+          });
+        }
+
+        if (template.timelineEvents) {
+          newProject.timelineEvents = template.timelineEvents.map(tte => {
+            const newEventId = crypto.randomUUID();
+            return {
+              description: '', // Default if not in template
+              tags: [],
+              linkedCharacterIds: (tte.linkedCharacterIds || []).map(charTemplateId => characterIdMap.get(charTemplateId) || charTemplateId),
+              linkedStoryArcIds: (tte.linkedStoryArcIds || []).map(arcTemplateId => storyArcIdMap.get(arcTemplateId) || arcTemplateId),
+              ...tte,
+              id: newEventId,
+              createdAt: newProject.createdAt,
+              updatedAt: newProject.updatedAt,
+            } as TimelineEvent;
+          });
+        }
+
+        if (template.storyPlannerData) {
+          const nodeIdMap = new Map<string, string>();
+          if (template.storyPlannerData.nodes) {
+            newProject.storyPlannerData.nodes = template.storyPlannerData.nodes.map(tn => {
+              const newNodeId = crypto.randomUUID();
+              if (tn.templateId) nodeIdMap.set(tn.templateId, newNodeId);
+              return {
+                content: '', // Default content if not in template
+                color: undefined,
+                linkedCharacterId: tn.linkedCharacterId ? (characterIdMap.get(tn.linkedCharacterId) || tn.linkedCharacterId) : undefined,
+                linkedStoryArcId: tn.linkedStoryArcId ? (storyArcIdMap.get(tn.linkedStoryArcId) || tn.linkedStoryArcId) : undefined,
+                ...tn,
+                id: newNodeId,
+                createdAt: newProject.createdAt,
+                updatedAt: newProject.updatedAt,
+              } as StoryNode;
+            });
+          }
+          if (template.storyPlannerData.edges) {
+            newProject.storyPlannerData.edges = template.storyPlannerData.edges.map(te => {
+              return {
+                label: '', // Default label if not in template
+                ...te,
+                id: crypto.randomUUID(),
+                sourceNodeId: nodeIdMap.get(te.sourceNodeTemplateId) || te.sourceNodeTemplateId,
+                targetNodeId: nodeIdMap.get(te.targetNodeTemplateId) || te.targetNodeTemplateId,
+                createdAt: newProject.createdAt,
+                updatedAt: newProject.updatedAt,
+              } as StoryEdge;
+            });
+          }
+        }
+        dispatch({ type: 'SET_PROJECT', payload: newProject });
+
+      } else {
+        // Original logic for blank project
+        const newBlankProject = createDefaultProject();
+        dispatch({ type: 'SET_PROJECT', payload: newBlankProject });
+      }
     }, [state.isDirty])
   };
 
